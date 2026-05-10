@@ -1,5 +1,6 @@
 {
   "manifest_version": 3,
+  "minimum_chrome_version": "120",
   "name": "PhantomGrid",
   "version": "0.1.0",
   "description": "Anti-tracking fingerprint spoofing, cookie containering, and tracker data poisoning.",

@@ -412,6 +412,20 @@
   // Global Privacy Control — always true, consistent with Sec-GPC header (v2 item 7)
   spoof(Navigator.prototype, "globalPrivacyControl", () => true);
 
+  // Cross-origin referrer trimming (v2 item 9)
+  const _origReferrer = document.referrer;
+  spoof(Document.prototype, "referrer", () => {
+    if (!_origReferrer) return '';
+    try {
+      const refOrigin = new URL(_origReferrer).origin;
+      const curOrigin = location.origin;
+      if (refOrigin === curOrigin) return _origReferrer;
+      return refOrigin + '/';
+    } catch(e) {
+      return _origReferrer;
+    }
+  });
+
   // Network Information API — hide real connection type
   try {
     if (navigator.connection) {
@@ -1455,5 +1469,10 @@
   //   strips 17 tracking params (utm_*, fbclid, gclid, dclid, msclkid,
   //   yclid, twclid, mc_eid, _ga, _gl, wbraid, gbraid) via
   //   queryTransform.removeParams. Main-frame + sub-frame only.
+  //
+  // - Cross-origin referrer trimming (v2 item 9): static DNR rule (ID 5)
+  //   sets Referrer-Policy: origin-when-cross-origin on all responses.
+  //   JS belt-and-suspenders: document.referrer spoofed to origin-only
+  //   for cross-origin, full path preserved for same-origin.
 
 })();
