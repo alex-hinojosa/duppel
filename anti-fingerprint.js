@@ -1320,9 +1320,13 @@
   // derived from the session seed. Labels are empty (matches browser
   // behavior before getUserMedia permission is granted). groupId is shared
   // across all devices (single-device-group, common on laptops).
+  //
+  // Stealth: override is on MediaDevices.prototype (not the instance).
+  // Returned devices use MediaDeviceInfo/InputDeviceInfo prototypes with
+  // property getters backed by a WeakMap (no own data properties).
   if (typeof navigator !== 'undefined' && navigator.mediaDevices &&
-      typeof navigator.mediaDevices.enumerateDevices === 'function') {
-    const _origEnumerate = navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices);
+      typeof MediaDevices !== 'undefined' &&
+      typeof MediaDevices.prototype.enumerateDevices === 'function') {
 
     // Deterministic device ID: 64-char hex from seed + kind string
     function makeDeviceId(seed, kind) {
@@ -1342,19 +1346,68 @@
       return h;
     }
 
+    // Per-device value store — getters on prototype read from here
+    const _devData = new WeakMap();
+
+    // Build spoofed prototypes that inherit from native prototypes.
+    // Property getters read from _devData WeakMap so instances have no
+    // own properties (matches native MediaDeviceInfo behavior).
+    const MDI = typeof MediaDeviceInfo !== 'undefined' ? MediaDeviceInfo : null;
+    const IDI = typeof InputDeviceInfo !== 'undefined' ? InputDeviceInfo : null;
+
+    function buildSpoofProto(NativeProto) {
+      const proto = Object.create(NativeProto);
+      for (const prop of ['deviceId', 'groupId', 'kind', 'label']) {
+        ORIG.defineProperty.call(Object, proto, prop, {
+          get: function() { return (_devData.get(this) || {})[prop] || ''; },
+          set: undefined,
+          enumerable: true,
+          configurable: true,
+        });
+      }
+      // toJSON matches native: returns plain object with the four fields
+      ORIG.defineProperty.call(Object, proto, 'toJSON', {
+        value: function toJSON() {
+          const d = _devData.get(this) || {};
+          return { deviceId: d.deviceId || '', kind: d.kind || '',
+                   label: d.label || '', groupId: d.groupId || '' };
+        },
+        writable: true, enumerable: true, configurable: true,
+      });
+      return proto;
+    }
+
+    const mdiProto = MDI ? buildSpoofProto(MDI.prototype) : null;
+    const idiProto = IDI ? buildSpoofProto(IDI.prototype) : null;
+
+    // InputDeviceInfo adds getCapabilities()
+    if (idiProto) {
+      ORIG.defineProperty.call(Object, idiProto, 'getCapabilities', {
+        value: disguise(function getCapabilities() { return {}; }, 'getCapabilities', 0),
+        writable: true, enumerable: true, configurable: true,
+      });
+    }
+
+    function createDevice(values) {
+      // audioinput/videoinput → InputDeviceInfo; audiooutput → MediaDeviceInfo
+      const isInput = values.kind === 'audioinput' || values.kind === 'videoinput';
+      const proto = isInput && idiProto ? idiProto : mdiProto;
+      if (!proto) return values; // fallback: plain object if no native prototypes
+      const dev = Object.create(proto);
+      _devData.set(dev, values);
+      return dev;
+    }
+
     const groupId = makeDeviceId(sessionSeed, 'group');
     const spoofedDevices = [
-      { kind: 'audioinput',  deviceId: makeDeviceId(sessionSeed, 'audioinput'),  groupId: groupId, label: '' },
-      { kind: 'audiooutput', deviceId: makeDeviceId(sessionSeed, 'audiooutput'), groupId: groupId, label: '' },
-      { kind: 'videoinput',  deviceId: makeDeviceId(sessionSeed, 'videoinput'),  groupId: groupId, label: '' },
+      createDevice({ kind: 'audioinput',  deviceId: makeDeviceId(sessionSeed, 'audioinput'),  groupId: groupId, label: '' }),
+      createDevice({ kind: 'audiooutput', deviceId: makeDeviceId(sessionSeed, 'audiooutput'), groupId: groupId, label: '' }),
+      createDevice({ kind: 'videoinput',  deviceId: makeDeviceId(sessionSeed, 'videoinput'),  groupId: groupId, label: '' }),
     ];
 
-    // Freeze entries to match native MediaDeviceInfo immutability
-    const frozenDevices = spoofedDevices.map(d => Object.freeze(d));
-    Object.freeze(frozenDevices);
-
-    navigator.mediaDevices.enumerateDevices = disguise(function enumerateDevices() {
-      return ORIG.promiseResolve.call(Promise, frozenDevices.slice());
+    // Patch at prototype level (not instance) — native location
+    MediaDevices.prototype.enumerateDevices = disguise(function enumerateDevices() {
+      return ORIG.promiseResolve.call(Promise, spoofedDevices.slice());
     }, 'enumerateDevices', 0);
   }
 

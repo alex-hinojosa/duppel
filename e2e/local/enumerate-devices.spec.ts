@@ -8,6 +8,9 @@ import { getTestPageUrl } from '../fixtures/extension';
 // device list: 1 audioinput, 1 audiooutput, 1 videoinput. Device IDs are
 // deterministic 64-char hex strings derived from the session seed. Labels
 // are empty (matches browser behavior before getUserMedia permission).
+//
+// Devices use native MediaDeviceInfo/InputDeviceInfo prototypes.
+// Override is on MediaDevices.prototype (not the instance).
 // ---------------------------------------------------------------------------
 
 test.describe('enumerateDevices spoofing (v2 item 11)', () => {
@@ -91,9 +94,113 @@ test.describe('enumerateDevices spoofing (v2 item 11)', () => {
     });
     expect(exists).toBe(true);
   });
+
+  test('toJSON returns expected shape', async ({ extensionPage }) => {
+    const json = await extensionPage.evaluate(async () => {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices.map((d: any) => d.toJSON());
+    });
+    expect(json).toHaveLength(3);
+    for (const entry of json) {
+      expect(entry).toHaveProperty('deviceId');
+      expect(entry).toHaveProperty('kind');
+      expect(entry).toHaveProperty('label');
+      expect(entry).toHaveProperty('groupId');
+    }
+  });
 });
 
-test.describe('enumerateDevices stealth (v2 item 11)', () => {
+test.describe('enumerateDevices prototype stealth (v2 item 11)', () => {
+  test('audioinput device is instanceof InputDeviceInfo', async ({ extensionPage }) => {
+    const result = await extensionPage.evaluate(async () => {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const input = devices.find((d: any) => d.kind === 'audioinput');
+      return {
+        isInputDeviceInfo: input instanceof InputDeviceInfo,
+        isMediaDeviceInfo: input instanceof MediaDeviceInfo,
+      };
+    });
+    expect(result.isInputDeviceInfo).toBe(true);
+    expect(result.isMediaDeviceInfo).toBe(true);
+  });
+
+  test('audiooutput device is instanceof MediaDeviceInfo (not InputDeviceInfo)', async ({ extensionPage }) => {
+    const result = await extensionPage.evaluate(async () => {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const output = devices.find((d: any) => d.kind === 'audiooutput');
+      return {
+        isInputDeviceInfo: output instanceof InputDeviceInfo,
+        isMediaDeviceInfo: output instanceof MediaDeviceInfo,
+      };
+    });
+    expect(result.isInputDeviceInfo).toBe(false);
+    expect(result.isMediaDeviceInfo).toBe(true);
+  });
+
+  test('videoinput device is instanceof InputDeviceInfo', async ({ extensionPage }) => {
+    const result = await extensionPage.evaluate(async () => {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const video = devices.find((d: any) => d.kind === 'videoinput');
+      return {
+        isInputDeviceInfo: video instanceof InputDeviceInfo,
+        isMediaDeviceInfo: video instanceof MediaDeviceInfo,
+      };
+    });
+    expect(result.isInputDeviceInfo).toBe(true);
+    expect(result.isMediaDeviceInfo).toBe(true);
+  });
+
+  test('devices have no own deviceId/kind/label/groupId properties', async ({ extensionPage }) => {
+    const result = await extensionPage.evaluate(async () => {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices.map((d: any) => ({
+        hasOwnDeviceId: d.hasOwnProperty('deviceId'),
+        hasOwnKind: d.hasOwnProperty('kind'),
+        hasOwnLabel: d.hasOwnProperty('label'),
+        hasOwnGroupId: d.hasOwnProperty('groupId'),
+      }));
+    });
+    for (const r of result) {
+      expect(r.hasOwnDeviceId).toBe(false);
+      expect(r.hasOwnKind).toBe(false);
+      expect(r.hasOwnLabel).toBe(false);
+      expect(r.hasOwnGroupId).toBe(false);
+    }
+  });
+
+  test('InputDeviceInfo devices have getCapabilities()', async ({ extensionPage }) => {
+    const result = await extensionPage.evaluate(async () => {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const input = devices.find((d: any) => d.kind === 'audioinput');
+      return {
+        hasMethod: typeof (input as any).getCapabilities === 'function',
+        result: (input as any).getCapabilities(),
+      };
+    });
+    expect(result.hasMethod).toBe(true);
+    expect(result.result).toEqual({});
+  });
+});
+
+test.describe('enumerateDevices descriptor stealth (v2 item 11)', () => {
+  test('enumerateDevices is NOT own property on navigator.mediaDevices', async ({ extensionPage }) => {
+    const hasOwn = await extensionPage.evaluate(() => {
+      return navigator.mediaDevices.hasOwnProperty('enumerateDevices');
+    });
+    expect(hasOwn).toBe(false);
+  });
+
+  test('enumerateDevices lives on MediaDevices.prototype', async ({ extensionPage }) => {
+    const result = await extensionPage.evaluate(() => {
+      return {
+        onProto: typeof MediaDevices.prototype.enumerateDevices === 'function',
+        matches: navigator.mediaDevices.enumerateDevices === MediaDevices.prototype.enumerateDevices,
+      };
+    });
+    expect(result.onProto).toBe(true);
+    expect(result.matches).toBe(true);
+  });
+
   test('enumerateDevices.name is "enumerateDevices"', async ({ extensionPage }) => {
     const name = await extensionPage.evaluate(() => {
       return navigator.mediaDevices.enumerateDevices.name;
@@ -113,6 +220,14 @@ test.describe('enumerateDevices stealth (v2 item 11)', () => {
       return navigator.mediaDevices.enumerateDevices.toString();
     });
     expect(str).toMatch(/^function enumerateDevices\(\) \{ \[native code\] \}$/);
+  });
+
+  test('GOPD on navigator.mediaDevices does not reveal enumerateDevices', async ({ extensionPage }) => {
+    const desc = await extensionPage.evaluate(() => {
+      const d = Object.getOwnPropertyDescriptor(navigator.mediaDevices, 'enumerateDevices');
+      return d === undefined ? 'undefined' : 'defined';
+    });
+    expect(desc).toBe('undefined');
   });
 });
 
