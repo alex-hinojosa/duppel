@@ -1450,5 +1450,10 @@
   //   returns true via hardened spoof() path. Sec-GPC: 1 header added as
   //   static DNR rule (rule ID 3). Header/JS parity guaranteed — both
   //   surfaces always advertise GPC.
+  //
+  // - Query string stripping (v2 item 8): static DNR redirect rule (ID 4)
+  //   strips 17 tracking params (utm_*, fbclid, gclid, dclid, msclkid,
+  //   yclid, twclid, mc_eid, _ga, _gl, wbraid, gbraid) via
+  //   queryTransform.removeParams. Main-frame + sub-frame only.
 
 })();

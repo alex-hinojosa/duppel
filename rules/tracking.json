@@ -53,6 +53,31 @@
     }
   },
   {
+    "id": 4,
+    "priority": 1,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "transform": {
+          "queryTransform": {
+            "removeParams": [
+              "utm_source", "utm_medium", "utm_campaign",
+              "utm_term", "utm_content", "utm_id",
+              "fbclid", "gclid", "dclid",
+              "msclkid", "yclid", "twclid",
+              "mc_eid", "_ga", "_gl",
+              "wbraid", "gbraid"
+            ]
+          }
+        }
+      }
+    },
+    "condition": {
+      "urlFilter": "*",
+      "resourceTypes": ["main_frame", "sub_frame"]
+    }
+  },
+  {
     "id": 100,
     "priority": 2,
     "action": { "type": "block" },
