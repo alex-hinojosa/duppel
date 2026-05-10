@@ -36,7 +36,7 @@ test.beforeAll(async () => {
         <script>document.getElementById('ref').textContent = document.referrer;</script>
         </body></html>`);
     });
-    crossOriginServer.listen(0, '127.0.0.1', () => {
+    crossOriginServer.listen(0, '0.0.0.0', () => {
       const addr = crossOriginServer.address() as { port: number };
       crossOriginPort = addr.port;
       resolve();
@@ -132,68 +132,143 @@ test.describe('Cross-origin referrer trimming — main-frame (v2 item 9)', () =>
   });
 });
 
-test.describe('Cross-origin referrer trimming — sub-resources (v2 item 9)', () => {
-  // Note: rule 1 removes Referer for `domainType: "thirdParty"` which uses eTLD+1
-  // domain matching, NOT origin matching. In the test environment both servers share
-  // 127.0.0.1 (same domain, different ports) so rule 1 does not fire. Instead,
-  // rule 5's Referrer-Policy: origin-when-cross-origin applies, sending origin-only.
-  // In production with truly different domains (different eTLD+1), rule 1 would
-  // remove Referer entirely — a stricter policy than origin-only.
+test.describe('Cross-origin referrer trimming — same-domain sub-resources (v2 item 9)', () => {
+  // 127.0.0.1:portA → 127.0.0.1:portB: same eTLD+1 domain, different port.
+  // Rule 1 (domainType: "thirdParty") does NOT fire (same domain).
+  // Rule 5's Referrer-Policy: origin-when-cross-origin applies → origin-only.
 
-  test('cross-origin fetch Referer is origin-only (Referrer-Policy applies)', async ({ context }) => {
+  test('same-domain cross-origin fetch Referer is origin-only', async ({ context }) => {
     const page = await context.newPage();
     const base = getTestPageUrl();
 
-    // Navigate to the fixture server
     await page.goto(base, { waitUntil: 'networkidle' });
 
-    // Fetch cross-origin echo-json endpoint
     const headers = await page.evaluate(async (port: number) => {
       const resp = await fetch(`http://127.0.0.1:${port}/echo-json`);
       return resp.json();
     }, crossOriginPort);
 
-    // Same-domain different-port: rule 1 (thirdParty) does not fire.
-    // Rule 5's Referrer-Policy trims to origin-only.
     const referer = headers['referer'] || '';
     expect(referer).not.toBe('');
     expect(referer).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
     await page.close();
   });
 
-  test('cross-origin sub-frame document.referrer is origin-only', async ({ context }) => {
+  test('same-domain sub-frame document.referrer is origin-only (Playwright frame access)', async ({ context }) => {
     const page = await context.newPage();
     const base = getTestPageUrl();
 
-    // Navigate to the fixture server
     await page.goto(base, { waitUntil: 'networkidle' });
 
-    // Create an iframe pointing to the cross-origin landing page
+    // Create iframe pointing to cross-origin landing page
     const iframeUrl = `http://127.0.0.1:${crossOriginPort}/landing`;
-    const iframeReferrer = await page.evaluate(async (url: string) => {
-      return new Promise<string>((resolve) => {
-        const iframe = document.createElement('iframe');
-        iframe.style.display = 'none';
-        iframe.onload = () => {
-          try {
-            const ref = iframe.contentDocument?.getElementById('ref');
-            resolve(ref?.textContent || '');
-          } catch {
-            resolve('CROSS_ORIGIN_BLOCKED');
-          }
-        };
-        iframe.src = url;
-        document.body.appendChild(iframe);
-      });
+    await page.evaluate((url: string) => {
+      const iframe = document.createElement('iframe');
+      iframe.src = url;
+      document.body.appendChild(iframe);
     }, iframeUrl);
 
-    // If readable: document.referrer in the iframe should be origin-only
-    if (iframeReferrer !== 'CROSS_ORIGIN_BLOCKED') {
-      if (iframeReferrer) {
-        expect(iframeReferrer).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
-      }
-      // Empty is also valid — no referrer for direct iframe insertion
-    }
+    // Use Playwright frame API — bypasses same-origin JS restriction
+    const childFrame = await page.waitForEvent('framenavigated', {
+      predicate: (f) => f.url().includes(`${crossOriginPort}/landing`),
+      timeout: 5000,
+    });
+    await childFrame.waitForLoadState('domcontentloaded');
+
+    const referrer = await childFrame.evaluate(() => document.referrer);
+    expect(referrer).not.toBe('');
+    expect(referrer).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
+    await page.close();
+  });
+
+  test('same-domain sub-frame server-observed Referer is origin-only', async ({ context }) => {
+    const page = await context.newPage();
+    const base = getTestPageUrl();
+
+    await page.goto(base, { waitUntil: 'networkidle' });
+
+    // Create iframe pointing to cross-origin echo-headers (HTML endpoint)
+    const echoUrl = `http://127.0.0.1:${crossOriginPort}/echo-headers`;
+    await page.evaluate((url: string) => {
+      const iframe = document.createElement('iframe');
+      iframe.src = url;
+      document.body.appendChild(iframe);
+    }, echoUrl);
+
+    // Access the iframe via Playwright frame API
+    const childFrame = await page.waitForEvent('framenavigated', {
+      predicate: (f) => f.url().includes(`${crossOriginPort}/echo-headers`),
+      timeout: 5000,
+    });
+    await childFrame.waitForLoadState('domcontentloaded');
+
+    // Read server-observed headers from inside the iframe
+    const raw = await childFrame.evaluate(() => {
+      const pre = document.getElementById('h');
+      return pre?.textContent || '{}';
+    });
+    const headers = JSON.parse(raw);
+    const referer = headers['referer'] || '';
+
+    // Same-domain sub-frame: Referer must be present and origin-only
+    expect(referer).not.toBe('');
+    expect(referer).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
+    await page.close();
+  });
+});
+
+test.describe('Cross-origin referrer trimming — third-party (v2 item 9)', () => {
+  // 127.0.0.1:portA → localhost:portB: different eTLD+1 domain.
+  // Rule 1 (domainType: "thirdParty") DOES fire for sub-resources → removes Referer.
+  // This proves the stricter no-Referer policy for true third-party requests.
+
+  test('third-party fetch has no Referer header (rule 1 removes it)', async ({ context }) => {
+    const page = await context.newPage();
+    const base = getTestPageUrl();
+
+    await page.goto(base, { waitUntil: 'networkidle' });
+
+    // Fetch to localhost (different eTLD+1 from 127.0.0.1) — rule 1 fires
+    const headers = await page.evaluate(async (port: number) => {
+      const resp = await fetch(`http://localhost:${port}/echo-json`);
+      return resp.json();
+    }, crossOriginPort);
+
+    // Rule 1 removes Referer entirely for thirdParty xmlhttprequest
+    expect(headers['referer']).toBeUndefined();
+    await page.close();
+  });
+
+  test('third-party sub-frame has no Referer header (rule 1 removes it)', async ({ context }) => {
+    const page = await context.newPage();
+    const base = getTestPageUrl();
+
+    await page.goto(base, { waitUntil: 'networkidle' });
+
+    // Create iframe to localhost (different eTLD+1) echo-headers endpoint
+    const echoUrl = `http://localhost:${crossOriginPort}/echo-headers`;
+    await page.evaluate((url: string) => {
+      const iframe = document.createElement('iframe');
+      iframe.src = url;
+      document.body.appendChild(iframe);
+    }, echoUrl);
+
+    // Access the iframe via Playwright frame API
+    const childFrame = await page.waitForEvent('framenavigated', {
+      predicate: (f) => f.url().includes('localhost') && f.url().includes('/echo-headers'),
+      timeout: 5000,
+    });
+    await childFrame.waitForLoadState('domcontentloaded');
+
+    // Read server-observed headers from inside the iframe
+    const raw = await childFrame.evaluate(() => {
+      const pre = document.getElementById('h');
+      return pre?.textContent || '{}';
+    });
+    const headers = JSON.parse(raw);
+
+    // Rule 1 removes Referer entirely for thirdParty sub_frame
+    expect(headers['referer']).toBeUndefined();
     await page.close();
   });
 });
