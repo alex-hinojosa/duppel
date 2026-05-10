@@ -50,6 +50,7 @@
     getOwnPropertyDescriptor: Object.getOwnPropertyDescriptor,
     getOwnPropertyDescriptors: Object.getOwnPropertyDescriptors,
     reflectGOPD: typeof Reflect !== "undefined" ? Reflect.getOwnPropertyDescriptor : null,
+    promiseResolve: Promise.resolve,
   };
   if (typeof WebGLRenderingContext !== "undefined") {
     ORIG.glGetParameter = WebGLRenderingContext.prototype.getParameter;
@@ -1313,6 +1314,50 @@
   // (which is detectable and breaks apps without TURN — rowan pass 4
   // finding #6). No MAIN-world RTCPeerConnection override needed.
 
+  // === enumerateDevices spoofing (v2 item 11) ===
+  // Returns a stable, low-entropy device list: one audioinput, one
+  // audiooutput, one videoinput. Device IDs are deterministic hex strings
+  // derived from the session seed. Labels are empty (matches browser
+  // behavior before getUserMedia permission is granted). groupId is shared
+  // across all devices (single-device-group, common on laptops).
+  if (typeof navigator !== 'undefined' && navigator.mediaDevices &&
+      typeof navigator.mediaDevices.enumerateDevices === 'function') {
+    const _origEnumerate = navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices);
+
+    // Deterministic device ID: 64-char hex from seed + kind string
+    function makeDeviceId(seed, kind) {
+      const rng = mulberry32(seed ^ hashStr(kind));
+      let hex = '';
+      for (let i = 0; i < 16; i++) {
+        hex += ((rng() * 0xFFFFFFFF) >>> 0).toString(16).padStart(8, '0');
+      }
+      return hex.slice(0, 64);
+    }
+
+    function hashStr(s) {
+      let h = 0;
+      for (let i = 0; i < s.length; i++) {
+        h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+      }
+      return h;
+    }
+
+    const groupId = makeDeviceId(sessionSeed, 'group');
+    const spoofedDevices = [
+      { kind: 'audioinput',  deviceId: makeDeviceId(sessionSeed, 'audioinput'),  groupId: groupId, label: '' },
+      { kind: 'audiooutput', deviceId: makeDeviceId(sessionSeed, 'audiooutput'), groupId: groupId, label: '' },
+      { kind: 'videoinput',  deviceId: makeDeviceId(sessionSeed, 'videoinput'),  groupId: groupId, label: '' },
+    ];
+
+    // Freeze entries to match native MediaDeviceInfo immutability
+    const frozenDevices = spoofedDevices.map(d => Object.freeze(d));
+    Object.freeze(frozenDevices);
+
+    navigator.mediaDevices.enumerateDevices = disguise(function enumerateDevices() {
+      return ORIG.promiseResolve.call(Promise, frozenDevices.slice());
+    }, 'enumerateDevices', 0);
+  }
+
   // === Worker navigator override script ===
   // Shared by Worker, Module Worker, and SharedWorker wrappers below.
   // Hoisted here so it's in scope for all three constructor intercepts.
@@ -1484,5 +1529,10 @@
   // - WebRTC IP leak prevention (v2 item 10): background.js sets
   //   chrome.privacy.network.webRTCIPHandlingPolicy to
   //   default_public_interface_only. No MAIN-world override needed.
+  // - enumerateDevices spoofing (v2 item 11): overrides
+  //   navigator.mediaDevices.enumerateDevices() to return a stable,
+  //   low-entropy device list (1 audioinput, 1 audiooutput, 1 videoinput).
+  //   Device IDs are deterministic hex from session seed. Labels empty
+  //   (matches pre-permission browser behavior).
 
 })();
