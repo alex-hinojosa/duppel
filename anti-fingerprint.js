@@ -1307,10 +1307,11 @@
   }, "getTimezoneOffset");
 
   // === WebRTC ===
-  // Rowan pass 4 finding #6: relay-only is detectable and breaks apps
-  // without TURN. Default to browser's own policy. Relay enforcement
-  // available as future opt-in "strict WebRTC" mode.
-  // WebRTC left at browser default — no override applied.
+  // v2 item 10: Chrome privacy API sets webRTCIPHandlingPolicy to
+  // default_public_interface_only (background.js). This prevents ICE
+  // candidates from exposing private/local IPs without forcing relay-only
+  // (which is detectable and breaks apps without TURN — rowan pass 4
+  // finding #6). No MAIN-world RTCPeerConnection override needed.
 
   // === Worker navigator override script ===
   // Shared by Worker, Module Worker, and SharedWorker wrappers below.
@@ -1480,5 +1481,8 @@
   //     Same-origin → full path+query preserved
   //   JS belt-and-suspenders: document.referrer spoofed to origin-only
   //   for cross-origin, full path preserved for same-origin.
+  // - WebRTC IP leak prevention (v2 item 10): background.js sets
+  //   chrome.privacy.network.webRTCIPHandlingPolicy to
+  //   default_public_interface_only. No MAIN-world override needed.
 
 })();
