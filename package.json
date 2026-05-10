@@ -1,0 +1,16 @@
+{
+  "name": "phantomgrid-e2e",
+  "private": true,
+  "scripts": {
+    "setup": "npm install && npx playwright install chromium",
+    "test": "npx playwright test --project=local --project=rotation",
+    "test:local": "npx playwright test --project=local",
+    "test:rotation": "npx playwright test --project=rotation",
+    "test:external": "npx playwright test --project=external",
+    "test:all": "npx playwright test",
+    "test:report": "npx playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0"
+  }
+}

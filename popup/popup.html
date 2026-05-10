@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>PhantomGrid</h1>
+      <label class="toggle">
+        <input type="checkbox" id="enableToggle" checked>
+        <span class="slider"></span>
+      </label>
+    </header>
+
+    <section class="identity">
+      <h2>Current Identity</h2>
+      <div class="identity-details">
+        <div class="detail"><span class="label">UA</span><span id="currentUA" class="value mono">—</span></div>
+        <div class="detail"><span class="label">Platform</span><span id="currentPlatform" class="value">—</span></div>
+        <div class="detail"><span class="label">Screen</span><span id="currentScreen" class="value">—</span></div>
+        <div class="detail"><span class="label">GPU</span><span id="currentGPU" class="value mono">—</span></div>
+        <div class="detail"><span class="label">TZ</span><span id="currentTZ" class="value">—</span></div>
+        <div class="detail"><span class="label">Cores</span><span id="currentCores" class="value">—</span></div>
+        <div class="detail"><span class="label">RAM</span><span id="currentRAM" class="value">—</span></div>
+      </div>
+      <div class="rotate-row">
+        <button id="rotateBtn" class="btn primary">Rotate Identity</button>
+        <label class="rotate-option" title="Reload all tabs on rotate, or just the active tab">
+          <input type="checkbox" id="rotateAllTabs">
+          All tabs
+        </label>
+      </div>
+      <div class="identity-mode">
+        <label title="Session: one identity for all tabs (recommended). Per-tab: each tab gets a different identity (expert mode — may increase fingerprint linkability).">
+          <input type="checkbox" id="perTabMode">
+          Per-tab mode <span class="mode-warn">(expert)</span>
+        </label>
+      </div>
+    </section>
+
+    <section class="chaos">
+      <h2>Chaos Level</h2>
+      <div class="chaos-selector">
+        <button class="chaos-btn" data-level="stealth">Stealth</button>
+        <button class="chaos-btn active" data-level="balanced">Balanced</button>
+        <button class="chaos-btn" data-level="chaos">Chaos</button>
+      </div>
+      <p class="chaos-desc" id="chaosDesc">Moderate spoofing, periodic data poisoning.</p>
+    </section>
+
+    <section class="stats">
+      <h2>Stats</h2>
+      <div class="stat-grid">
+        <div class="stat">
+          <span class="stat-value" id="statTrackers">0</span>
+          <span class="stat-label">Trackers Blocked</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="statCookies">0</span>
+          <span class="stat-label">Cookies Cleaned</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="statBeacons">0</span>
+          <span class="stat-label">Fake Beacons</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="statRotations">0</span>
+          <span class="stat-label">Rotations</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="actions">
+      <button id="cleanCookiesBtn" class="btn secondary">Clean Cookies Now</button>
+      <button id="fireBeaconsBtn" class="btn secondary">Fire Beacons Now</button>
+    </section>
+
+    <section class="site-override">
+      <label>
+        <input type="checkbox" id="siteEnabled" checked>
+        Enabled on <span id="currentSite">this site</span>
+      </label>
+    </section>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

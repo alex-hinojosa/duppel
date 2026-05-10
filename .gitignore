@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+._.DS_Store
+**/.DS_Store
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node / Playwright
+node_modules/
+playwright-report/
+test-results/
+blob-report/
+
+# Build artifacts (regeneratable from rules/*.json)
+_metadata/generated_indexed_rulesets/
+
+# Renamed-but-preserved historical tree (Item 4 third-corrective rename, kept on NAS for reference, NOT canonical)
+_stale_nested_copy/
+
+# Temp / scratch
+*.bak
+*.orig
+*.log
+tmp/
+.cache/
+
+# Secrets (PhantomGrid does not currently use any, but defense in depth)
+.env
+.env.local
+*.pem
+*.key
