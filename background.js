@@ -25,8 +25,30 @@ const STATE = {
 // === Side Panel — open on extension icon click ===
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
+// === WebRTC IP Leak Prevention (v2 item 10) ===
+// Set WebRTC to default_public_interface_only so ICE candidates do not
+// expose private/local IP addresses.  Idempotent — safe to call on every
+// install, startup, and service-worker wake.  NOT relay-only: that is more
+// detectable and breaks apps without a TURN server.
+async function applyWebRTCPolicy() {
+  try {
+    await chrome.privacy.network.webRTCIPHandlingPolicy.set({
+      value: 'default_public_interface_only',
+    });
+  } catch (e) {
+    // Log failure visibly — do not silently claim protection
+    console.error('[PhantomGrid] Failed to set WebRTC policy:', e);
+  }
+}
+applyWebRTCPolicy();
+
 // === Initialization ===
 chrome.runtime.onInstalled.addListener(async () => {
+  // WebRTC policy — also applied at top-level, but re-apply on install
+  // to ensure the setting takes effect even if the initial top-level
+  // call raced with permission grant.
+  await applyWebRTCPolicy();
+
   // Generate initial identity (writes profile to session storage, updates UA)
   await createIdentity();
 

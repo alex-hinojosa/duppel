@@ -12,7 +12,8 @@
     "alarms",
     "scripting",
     "tabs",
-    "sidePanel"
+    "sidePanel",
+    "privacy"
   ],
   "host_permissions": [
     "<all_urls>"
