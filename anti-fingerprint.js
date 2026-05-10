@@ -409,6 +409,9 @@
   // maxTouchPoints — desktop = 0, prevents Surface Pro touch leak
   spoof(Navigator.prototype, "maxTouchPoints", () => 0);
 
+  // Global Privacy Control — always true, consistent with Sec-GPC header (v2 item 7)
+  spoof(Navigator.prototype, "globalPrivacyControl", () => true);
+
   // Network Information API — hide real connection type
   try {
     if (navigator.connection) {
@@ -1442,5 +1445,10 @@
   //   set to "get propName" format. GOPD/GOPDs/Reflect.GOPD normalize
   //   descriptor flags against pristine baselines via _spoofedProps registry.
   //   Wrapper function.length preserved to match native arity.
+  //
+  // - Global Privacy Control (v2 item 7): navigator.globalPrivacyControl
+  //   returns true via hardened spoof() path. Sec-GPC: 1 header added as
+  //   static DNR rule (rule ID 3). Header/JS parity guaranteed — both
+  //   surfaces always advertise GPC.
 
 })();

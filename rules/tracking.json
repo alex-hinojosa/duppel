@@ -39,6 +39,20 @@
     }
   },
   {
+    "id": 3,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "requestHeaders": [
+        { "header": "Sec-GPC", "operation": "set", "value": "1" }
+      ]
+    },
+    "condition": {
+      "urlFilter": "*",
+      "resourceTypes": ["main_frame", "sub_frame", "xmlhttprequest", "script", "image", "stylesheet", "font", "media", "other"]
+    }
+  },
+  {
     "id": 100,
     "priority": 2,
     "action": { "type": "block" },

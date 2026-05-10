@@ -28,6 +28,11 @@ function ensureServer(): Promise<number> {
   if (_server && _serverPort) return Promise.resolve(_serverPort);
   return new Promise((resolve) => {
     _server = http.createServer((req, res) => {
+      if (req.url === '/echo-headers') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(req.headers));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(TEST_PAGE_HTML);
     });
