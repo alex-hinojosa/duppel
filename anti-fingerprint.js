@@ -1472,6 +1472,12 @@
   //
   // - Cross-origin referrer trimming (v2 item 9): static DNR rule (ID 5)
   //   sets Referrer-Policy: origin-when-cross-origin on all responses.
+  //   Combined with pre-existing rule 1 (Referer removal for domainType
+  //   thirdParty sub-requests), the effective policy is:
+  //     Main-frame cross-origin → origin-only Referer
+  //     Same-domain cross-origin (different port/scheme) → origin-only Referer
+  //     Third-party sub-resources (different eTLD+1) → no Referer (rule 1)
+  //     Same-origin → full path+query preserved
   //   JS belt-and-suspenders: document.referrer spoofed to origin-only
   //   for cross-origin, full path preserved for same-origin.
 
