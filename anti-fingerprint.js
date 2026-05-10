@@ -1321,12 +1321,15 @@
   // behavior before getUserMedia permission is granted). groupId is shared
   // across all devices (single-device-group, common on laptops).
   //
-  // Stealth: override is on MediaDevices.prototype (not the instance).
-  // Returned devices use MediaDeviceInfo/InputDeviceInfo prototypes with
-  // property getters backed by a WeakMap (no own data properties).
+  // Stealth: no synthetic intermediate prototypes. Property getters are
+  // patched directly on MediaDeviceInfo.prototype via spoof() (GOPD
+  // normalization, native toString, getter.name all automatic). Devices
+  // are Object.create(NativeProto) with no own properties. Fresh object
+  // identities per call; stable values across calls.
   if (typeof navigator !== 'undefined' && navigator.mediaDevices &&
       typeof MediaDevices !== 'undefined' &&
-      typeof MediaDevices.prototype.enumerateDevices === 'function') {
+      typeof MediaDevices.prototype.enumerateDevices === 'function' &&
+      typeof MediaDeviceInfo !== 'undefined') {
 
     // Deterministic device ID: 64-char hex from seed + kind string
     function makeDeviceId(seed, kind) {
@@ -1346,68 +1349,74 @@
       return h;
     }
 
-    // Per-device value store — getters on prototype read from here
+    // Per-device value store — patched prototype getters read from here.
+    // Spoofed devices are registered; real devices fall through to the
+    // original native getter.
     const _devData = new WeakMap();
 
-    // Build spoofed prototypes that inherit from native prototypes.
-    // Property getters read from _devData WeakMap so instances have no
-    // own properties (matches native MediaDeviceInfo behavior).
-    const MDI = typeof MediaDeviceInfo !== 'undefined' ? MediaDeviceInfo : null;
+    const MDI = MediaDeviceInfo;
     const IDI = typeof InputDeviceInfo !== 'undefined' ? InputDeviceInfo : null;
 
-    function buildSpoofProto(NativeProto) {
-      const proto = Object.create(NativeProto);
-      for (const prop of ['deviceId', 'groupId', 'kind', 'label']) {
-        ORIG.defineProperty.call(Object, proto, prop, {
-          get: function() { return (_devData.get(this) || {})[prop] || ''; },
-          set: undefined,
-          enumerable: true,
-          configurable: true,
-        });
+    // Patch getters directly on MediaDeviceInfo.prototype via spoof().
+    // In Chrome, deviceId/groupId/kind/label getters live on
+    // MediaDeviceInfo.prototype (InputDeviceInfo inherits them).
+    // spoof() saves pristine descriptors → GOPD normalization automatic.
+    for (const prop of ['deviceId', 'groupId', 'kind', 'label']) {
+      const origGetter = (ORIG.getOwnPropertyDescriptor.call(Object, MDI.prototype, prop) || {}).get;
+      spoof(MDI.prototype, prop, function() {
+        const data = _devData.get(this);
+        if (data) return data[prop] || '';
+        // Real device — delegate to original native getter
+        if (origGetter) return origGetter.call(this);
+        return undefined;
+      });
+    }
+
+    // Patch toJSON on MediaDeviceInfo.prototype — native toJSON reads
+    // this.deviceId etc, which hits our patched getters automatically.
+    // But the original toJSON may throw on spoofed objects that lack
+    // internal slots, so we intercept it.
+    const origToJSON = MDI.prototype.toJSON;
+    MDI.prototype.toJSON = disguise(function toJSON() {
+      if (_devData.has(this)) {
+        return { deviceId: this.deviceId, kind: this.kind,
+                 label: this.label, groupId: this.groupId };
       }
-      // toJSON matches native: returns plain object with the four fields
-      ORIG.defineProperty.call(Object, proto, 'toJSON', {
-        value: function toJSON() {
-          const d = _devData.get(this) || {};
-          return { deviceId: d.deviceId || '', kind: d.kind || '',
-                   label: d.label || '', groupId: d.groupId || '' };
-        },
-        writable: true, enumerable: true, configurable: true,
-      });
-      return proto;
+      if (origToJSON) return origToJSON.call(this);
+      return { deviceId: this.deviceId, kind: this.kind,
+               label: this.label, groupId: this.groupId };
+    }, 'toJSON', 0);
+
+    // Patch getCapabilities on InputDeviceInfo.prototype
+    if (IDI) {
+      const origGetCaps = (ORIG.getOwnPropertyDescriptor.call(Object, IDI.prototype, 'getCapabilities') || {}).value;
+      IDI.prototype.getCapabilities = disguise(function getCapabilities() {
+        if (_devData.has(this)) return {};
+        if (origGetCaps) return origGetCaps.call(this);
+        return {};
+      }, 'getCapabilities', 0);
     }
 
-    const mdiProto = MDI ? buildSpoofProto(MDI.prototype) : null;
-    const idiProto = IDI ? buildSpoofProto(IDI.prototype) : null;
-
-    // InputDeviceInfo adds getCapabilities()
-    if (idiProto) {
-      ORIG.defineProperty.call(Object, idiProto, 'getCapabilities', {
-        value: disguise(function getCapabilities() { return {}; }, 'getCapabilities', 0),
-        writable: true, enumerable: true, configurable: true,
-      });
-    }
-
-    function createDevice(values) {
-      // audioinput/videoinput → InputDeviceInfo; audiooutput → MediaDeviceInfo
-      const isInput = values.kind === 'audioinput' || values.kind === 'videoinput';
-      const proto = isInput && idiProto ? idiProto : mdiProto;
-      if (!proto) return values; // fallback: plain object if no native prototypes
-      const dev = Object.create(proto);
-      _devData.set(dev, values);
-      return dev;
-    }
-
+    // Stable device values — fresh wrapper objects created per call
     const groupId = makeDeviceId(sessionSeed, 'group');
-    const spoofedDevices = [
-      createDevice({ kind: 'audioinput',  deviceId: makeDeviceId(sessionSeed, 'audioinput'),  groupId: groupId, label: '' }),
-      createDevice({ kind: 'audiooutput', deviceId: makeDeviceId(sessionSeed, 'audiooutput'), groupId: groupId, label: '' }),
-      createDevice({ kind: 'videoinput',  deviceId: makeDeviceId(sessionSeed, 'videoinput'),  groupId: groupId, label: '' }),
+    const deviceSpecs = [
+      { kind: 'audioinput',  deviceId: makeDeviceId(sessionSeed, 'audioinput'),  groupId: groupId, label: '' },
+      { kind: 'audiooutput', deviceId: makeDeviceId(sessionSeed, 'audiooutput'), groupId: groupId, label: '' },
+      { kind: 'videoinput',  deviceId: makeDeviceId(sessionSeed, 'videoinput'),  groupId: groupId, label: '' },
     ];
 
-    // Patch at prototype level (not instance) — native location
+    // Patch at prototype level (not instance) — native location.
+    // Each call creates fresh device objects (distinct identity) with
+    // stable values (same deviceId/groupId/kind/label).
     MediaDevices.prototype.enumerateDevices = disguise(function enumerateDevices() {
-      return ORIG.promiseResolve.call(Promise, spoofedDevices.slice());
+      const devices = deviceSpecs.map(function(spec) {
+        const isInput = spec.kind === 'audioinput' || spec.kind === 'videoinput';
+        const proto = isInput && IDI ? IDI.prototype : MDI.prototype;
+        const dev = Object.create(proto);
+        _devData.set(dev, spec);
+        return dev;
+      });
+      return ORIG.promiseResolve.call(Promise, devices);
     }, 'enumerateDevices', 0);
   }
 
