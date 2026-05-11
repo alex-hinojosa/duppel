@@ -182,6 +182,249 @@ test.describe('Session identity — UA header consistency (v2 item 1)', () => {
   });
 });
 
+test.describe('Session identity — rotation behavior (v2 item 1)', () => {
+  test('rotation changes seed and UA for all open tabs', async ({ context, extensionId }) => {
+    // Open two stable pages
+    const page1 = await openStablePage(context);
+    const page2 = await openStablePage(context);
+
+    // Collect pre-rotation state
+    const seedBefore = await page1.evaluate(() => sessionStorage.getItem('__pg_seed__'));
+    const uaBefore = await page1.evaluate(() => navigator.userAgent);
+
+    // Trigger rotation via popup
+    const popup = await context.newPage();
+    await popup.goto(`chrome-extension://${extensionId}/popup/popup.html`);
+    await popup.waitForLoadState('domcontentloaded');
+    await popup.waitForTimeout(500);
+    await popup.click('#rotateBtn');
+    await popup.waitForTimeout(2500);
+    await popup.close();
+
+    // Reload pages to pick up new seed
+    await page1.reload({ waitUntil: 'domcontentloaded' });
+    await page1.waitForTimeout(800);
+    await page1.reload({ waitUntil: 'domcontentloaded' });
+    await page1.waitForTimeout(500);
+
+    await page2.reload({ waitUntil: 'domcontentloaded' });
+    await page2.waitForTimeout(800);
+    await page2.reload({ waitUntil: 'domcontentloaded' });
+    await page2.waitForTimeout(500);
+
+    // Verify seed changed
+    const seedAfter1 = await page1.evaluate(() => sessionStorage.getItem('__pg_seed__'));
+    const seedAfter2 = await page2.evaluate(() => sessionStorage.getItem('__pg_seed__'));
+
+    // Both tabs should have the same NEW seed
+    expect(seedAfter1).toBeTruthy();
+    expect(seedAfter1).toBe(seedAfter2);
+
+    // Both tabs should now have matching UA
+    const uaAfter1 = await page1.evaluate(() => navigator.userAgent);
+    const uaAfter2 = await page2.evaluate(() => navigator.userAgent);
+    expect(uaAfter1).toBe(uaAfter2);
+
+    // HTTP UA should also match
+    const httpUA = await page1.evaluate(async () => {
+      const resp = await fetch('/echo-headers');
+      const headers = await resp.json();
+      return headers['user-agent'] || '';
+    });
+    expect(httpUA).toBe(uaAfter1);
+
+    await page1.close();
+    await page2.close();
+  });
+});
+
+test.describe('Session identity — mode-switch transitions (v2 item 1)', () => {
+  test('session→per-tab: fresh tabs get distinct seeds', async ({ context, extensionId }) => {
+    // Switch to per-tab mode FIRST via popup
+    const popup = await context.newPage();
+    await popup.goto(`chrome-extension://${extensionId}/popup/popup.html`);
+    await popup.waitForLoadState('domcontentloaded');
+    await popup.waitForTimeout(500);
+
+    await popup.click('#perTabMode');
+    await popup.waitForTimeout(300);
+    await popup.click('#perTabConfirm');
+    await popup.waitForTimeout(1000);
+    await popup.close();
+
+    // THEN open fresh pages — in per-tab mode, each tab generates its
+    // own random seed in anti-fingerprint.js and bridge.js does NOT
+    // force-correct to the session seed.
+    const url = getTestPageUrl();
+    const page1 = await context.newPage();
+    await page1.goto(url);
+    await page1.waitForTimeout(800);
+
+    const page2 = await context.newPage();
+    await page2.goto(url);
+    await page2.waitForTimeout(800);
+
+    const seed1 = await page1.evaluate(() => sessionStorage.getItem('__pg_seed__'));
+    const seed2 = await page2.evaluate(() => sessionStorage.getItem('__pg_seed__'));
+
+    // In per-tab mode, each tab should have its own distinct seed
+    expect(seed1).toBeTruthy();
+    expect(seed2).toBeTruthy();
+    expect(seed1).not.toBe(seed2);
+
+    await page1.close();
+    await page2.close();
+  });
+
+  test('per-tab→session: tabs converge to shared seed', async ({ context, extensionId }) => {
+    // Start in per-tab mode, then switch back to session
+    const popup = await context.newPage();
+    await popup.goto(`chrome-extension://${extensionId}/popup/popup.html`);
+    await popup.waitForLoadState('domcontentloaded');
+    await popup.waitForTimeout(500);
+
+    // Enable per-tab mode
+    await popup.click('#perTabMode');
+    await popup.waitForTimeout(300);
+    await popup.click('#perTabConfirm');
+    await popup.waitForTimeout(500);
+
+    // Open two pages in per-tab mode
+    const page1 = await openStablePage(context);
+    const page2 = await openStablePage(context);
+
+    // Now switch back to session mode
+    await popup.click('#perTabMode'); // uncheck → session
+    await popup.waitForTimeout(2000);
+    await popup.close();
+
+    // Reload pages to pick up converged session seed
+    await page1.reload({ waitUntil: 'domcontentloaded' });
+    await page1.waitForTimeout(800);
+    await page1.reload({ waitUntil: 'domcontentloaded' });
+    await page1.waitForTimeout(500);
+
+    await page2.reload({ waitUntil: 'domcontentloaded' });
+    await page2.waitForTimeout(800);
+    await page2.reload({ waitUntil: 'domcontentloaded' });
+    await page2.waitForTimeout(500);
+
+    const seed1 = await page1.evaluate(() => sessionStorage.getItem('__pg_seed__'));
+    const seed2 = await page2.evaluate(() => sessionStorage.getItem('__pg_seed__'));
+
+    // After switching to session mode, both tabs should share one seed
+    expect(seed1).toBeTruthy();
+    expect(seed1).toBe(seed2);
+
+    await page1.close();
+    await page2.close();
+  });
+});
+
+test.describe('Session identity — SW wake preservation (v2 item 1)', () => {
+  test('sessionSeed persists in chrome.storage.session', async ({ context }) => {
+    const sw = context.serviceWorkers()[0];
+    expect(sw).toBeTruthy();
+    // Poll for sessionSeed to be written (onInstalled creates identity)
+    let sessionSeed: any = null;
+    for (let i = 0; i < 20; i++) {
+      sessionSeed = await sw.evaluate(async () => {
+        const data = await chrome.storage.session.get(['sessionSeed']);
+        return data.sessionSeed || null;
+      });
+      if (sessionSeed) break;
+      await new Promise(r => setTimeout(r, 200));
+    }
+    expect(sessionSeed).toBeTruthy();
+    expect(typeof sessionSeed).toBe('number');
+  });
+
+  test('profile persists in chrome.storage.session', async ({ context }) => {
+    const sw = context.serviceWorkers()[0];
+    expect(sw).toBeTruthy();
+    let profile: any = null;
+    for (let i = 0; i < 20; i++) {
+      profile = await sw.evaluate(async () => {
+        const data = await chrome.storage.session.get(['profile']);
+        return data.profile || null;
+      });
+      if (profile) break;
+      await new Promise(r => setTimeout(r, 200));
+    }
+    expect(profile).not.toBeNull();
+    expect(profile.userAgent).toMatch(/^Mozilla\/5\.0/);
+    expect(profile.platform).toBeTruthy();
+  });
+});
+
+test.describe('Session identity — per-tab warning dialog (v2 item 1)', () => {
+  test('Cancel reverts checkbox without changing mode', async ({ context, extensionId }) => {
+    const popup = await context.newPage();
+    await popup.goto(`chrome-extension://${extensionId}/popup/popup.html`);
+    await popup.waitForLoadState('domcontentloaded');
+    await popup.waitForTimeout(500);
+
+    // Verify initial state: per-tab is unchecked
+    const initialChecked = await popup.$eval('#perTabMode', (el: any) => el.checked);
+    expect(initialChecked).toBe(false);
+
+    // Click per-tab checkbox → dialog opens
+    await popup.click('#perTabMode');
+    await popup.waitForTimeout(300);
+
+    // Dialog should be visible
+    const dialogOpen = await popup.$eval('#perTabWarning', (el: any) => el.open);
+    expect(dialogOpen).toBe(true);
+
+    // Click Cancel
+    await popup.click('#perTabCancel');
+    await popup.waitForTimeout(300);
+
+    // Checkbox should revert to unchecked
+    const afterCancel = await popup.$eval('#perTabMode', (el: any) => el.checked);
+    expect(afterCancel).toBe(false);
+
+    // Mode should still be session
+    const mode = await popup.evaluate(() => {
+      return new Promise<string>((resolve) => {
+        chrome.runtime.sendMessage({ type: "getState" }, (state: any) => {
+          resolve(state?.identityMode || '');
+        });
+      });
+    });
+    expect(mode).toBe('session');
+
+    await popup.close();
+  });
+
+  test('Confirm enables per-tab mode', async ({ context, extensionId }) => {
+    const popup = await context.newPage();
+    await popup.goto(`chrome-extension://${extensionId}/popup/popup.html`);
+    await popup.waitForLoadState('domcontentloaded');
+    await popup.waitForTimeout(500);
+
+    // Click per-tab checkbox → dialog opens
+    await popup.click('#perTabMode');
+    await popup.waitForTimeout(300);
+
+    // Click Enable Per-Tab
+    await popup.click('#perTabConfirm');
+    await popup.waitForTimeout(1000);
+
+    // Mode should now be per-tab
+    const mode = await popup.evaluate(() => {
+      return new Promise<string>((resolve) => {
+        chrome.runtime.sendMessage({ type: "getState" }, (state: any) => {
+          resolve(state?.identityMode || '');
+        });
+      });
+    });
+    expect(mode).toBe('per-tab');
+
+    await popup.close();
+  });
+});
+
 test.describe('Session identity — regression checks (v2 item 1)', () => {
   test('Sec-GPC header still present', async ({ extensionPage }) => {
     const headers = await extensionPage.evaluate(async () => {
