@@ -84,6 +84,19 @@
       </label>
     </section>
   </div>
+
+  <dialog id="perTabWarning">
+    <div class="dialog-body">
+      <h3>Enable Per-Tab Mode?</h3>
+      <p>Per-tab mode gives each tab a different fingerprint identity. This may <strong>increase</strong> fingerprint linkability against biometric trackers, because cross-tab hardware contradictions are detectable when the same human operates multiple tabs.</p>
+      <p>Most users should keep session mode (one identity for all tabs).</p>
+      <div class="dialog-actions">
+        <button id="perTabCancel" class="btn secondary">Cancel</button>
+        <button id="perTabConfirm" class="btn warn">Enable Per-Tab</button>
+      </div>
+    </div>
+  </dialog>
+
   <script src="popup.js"></script>
 </body>
 </html>
