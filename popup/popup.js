@@ -163,14 +163,36 @@ fireBeaconsBtn.addEventListener("click", () => {
   });
 });
 
+// Per-tab mode: show warning dialog before enabling (v2 item 1).
+// Switching back to session mode needs no confirmation.
+const perTabWarning = document.getElementById("perTabWarning");
+const perTabCancel = document.getElementById("perTabCancel");
+const perTabConfirm = document.getElementById("perTabConfirm");
+
 perTabMode.addEventListener("change", () => {
-  const mode = perTabMode.checked ? "per-tab" : "session";
-  chrome.runtime.sendMessage({ type: "setIdentityMode", mode: mode }, () => {
-    // Refresh UI after mode change
+  if (perTabMode.checked) {
+    perTabWarning.showModal();
+  } else {
+    chrome.runtime.sendMessage({ type: "setIdentityMode", mode: "session" }, () => {
+      chrome.runtime.sendMessage({ type: "getState" }, (state) => {
+        if (state) updateUI(state);
+      });
+    });
+  }
+});
+
+perTabConfirm.addEventListener("click", () => {
+  perTabWarning.close();
+  chrome.runtime.sendMessage({ type: "setIdentityMode", mode: "per-tab" }, () => {
     chrome.runtime.sendMessage({ type: "getState" }, (state) => {
       if (state) updateUI(state);
     });
   });
+});
+
+perTabCancel.addEventListener("click", () => {
+  perTabWarning.close();
+  perTabMode.checked = false;
 });
 
 siteEnabled.addEventListener("change", async () => {

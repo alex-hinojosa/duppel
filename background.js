@@ -6,6 +6,38 @@
 
 importScripts("profiles.js", "poisoner.js");
 
+// === Storage Architecture (v2 Item 1: Session-Level Identity Default) ===
+// Three storage layers serve different lifetimes:
+//
+// 1. chrome.storage.session — Extension-session scoped.
+//    Survives SW restart within a browser session. Dies on browser quit.
+//    Stores: profile, sessionSeed, tabSeeds, enabled, siteOverrides, chaosLevel.
+//    This is NOT the same as web sessionStorage.
+//
+// 2. chrome.storage.local — Persistent across browser restarts.
+//    Stores: stats, chaosLevel, identityMode.
+//    identityMode persists so the user's preference survives browser restarts.
+//
+// 3. sessionStorage (MAIN world) — Per-tab, per-origin.
+//    Stores: __pg_seed__ — the seed anti-fingerprint.js uses to derive its profile.
+//    Set by background.js via chrome.scripting.executeScript (MAIN world injection).
+//    Read by both anti-fingerprint.js (MAIN) and bridge.js (ISOLATED, shared storage).
+//    Dies when the tab closes or navigates cross-origin.
+//
+// Identity lifetime (session mode, the default):
+//   One identity per browser session, rotating every 24h (alarm-based).
+//   On browser restart, chrome.storage.session is empty → restoreState() finds
+//   no profile → calls rotateIdentity() → fresh identity + new UA rule.
+//   The 24h alarm also rotates within a running session.
+//
+// Known residual — cold-start race:
+//   On the first navigation of a new tab to a new origin, sessionStorage is empty.
+//   anti-fingerprint.js (document_start, MAIN world) generates a random seed →
+//   JS profile may differ from the network UA header for one page load.
+//   bridge.js detects the desync via seedObserved → background re-injects the
+//   session seed → tab reloads with correct identity (~100ms window).
+//   Item 2 (first-nav UA alignment) addresses this further via pre-set DNR rule.
+
 // === State ===
 const STATE = {
   enabled: true,

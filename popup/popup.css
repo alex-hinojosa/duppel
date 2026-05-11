@@ -277,3 +277,49 @@ h2 {
   color: #b0b0b0;
   font-weight: 600;
 }
+
+/* Per-tab warning dialog (v2 item 1) */
+dialog {
+  border: 1px solid #2a2a4a;
+  border-radius: 10px;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  padding: 0;
+  max-width: 260px;
+}
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+.dialog-body {
+  padding: 16px;
+}
+.dialog-body h3 {
+  font-size: 14px;
+  color: #ff8800;
+  margin-bottom: 10px;
+}
+.dialog-body p {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #b0b0b0;
+  margin-bottom: 8px;
+}
+.dialog-body strong {
+  color: #ff8800;
+}
+.dialog-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.dialog-actions .btn {
+  flex: 1;
+  padding: 8px 12px;
+}
+.btn.warn {
+  background: #ff8800;
+  color: #1a1a2e;
+}
+.btn.warn:hover {
+  background: #e07700;
+}
