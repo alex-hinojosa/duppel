@@ -50,6 +50,7 @@
     getOwnPropertyDescriptor: Object.getOwnPropertyDescriptor,
     getOwnPropertyDescriptors: Object.getOwnPropertyDescriptors,
     reflectGOPD: typeof Reflect !== "undefined" ? Reflect.getOwnPropertyDescriptor : null,
+    promiseResolve: Promise.resolve,
   };
   if (typeof WebGLRenderingContext !== "undefined") {
     ORIG.glGetParameter = WebGLRenderingContext.prototype.getParameter;
@@ -1313,6 +1314,112 @@
   // (which is detectable and breaks apps without TURN — rowan pass 4
   // finding #6). No MAIN-world RTCPeerConnection override needed.
 
+  // === enumerateDevices spoofing (v2 item 11) ===
+  // Returns a stable, low-entropy device list: one audioinput, one
+  // audiooutput, one videoinput. Device IDs are deterministic hex strings
+  // derived from the session seed. Labels are empty (matches browser
+  // behavior before getUserMedia permission is granted). groupId is shared
+  // across all devices (single-device-group, common on laptops).
+  //
+  // Stealth: no synthetic intermediate prototypes. Property getters are
+  // patched directly on MediaDeviceInfo.prototype via spoof() (GOPD
+  // normalization, native toString, getter.name all automatic). Devices
+  // are Object.create(NativeProto) with no own properties. Fresh object
+  // identities per call; stable values across calls.
+  if (typeof navigator !== 'undefined' && navigator.mediaDevices &&
+      typeof MediaDevices !== 'undefined' &&
+      typeof MediaDevices.prototype.enumerateDevices === 'function' &&
+      typeof MediaDeviceInfo !== 'undefined') {
+
+    // Deterministic device ID: 64-char hex from seed + kind string
+    function makeDeviceId(seed, kind) {
+      const rng = mulberry32(seed ^ hashStr(kind));
+      let hex = '';
+      for (let i = 0; i < 16; i++) {
+        hex += ((rng() * 0xFFFFFFFF) >>> 0).toString(16).padStart(8, '0');
+      }
+      return hex.slice(0, 64);
+    }
+
+    function hashStr(s) {
+      let h = 0;
+      for (let i = 0; i < s.length; i++) {
+        h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+      }
+      return h;
+    }
+
+    // Per-device value store — patched prototype getters read from here.
+    // Spoofed devices are registered; real devices fall through to the
+    // original native getter.
+    const _devData = new WeakMap();
+
+    const MDI = MediaDeviceInfo;
+    const IDI = typeof InputDeviceInfo !== 'undefined' ? InputDeviceInfo : null;
+
+    // Patch getters directly on MediaDeviceInfo.prototype via spoof().
+    // In Chrome, deviceId/groupId/kind/label getters live on
+    // MediaDeviceInfo.prototype (InputDeviceInfo inherits them).
+    // spoof() saves pristine descriptors → GOPD normalization automatic.
+    for (const prop of ['deviceId', 'groupId', 'kind', 'label']) {
+      const origGetter = (ORIG.getOwnPropertyDescriptor.call(Object, MDI.prototype, prop) || {}).get;
+      spoof(MDI.prototype, prop, function() {
+        const data = _devData.get(this);
+        if (data) return data[prop] || '';
+        // Real device — delegate to original native getter
+        if (origGetter) return origGetter.call(this);
+        return undefined;
+      });
+    }
+
+    // Patch toJSON on MediaDeviceInfo.prototype — native toJSON reads
+    // this.deviceId etc, which hits our patched getters automatically.
+    // But the original toJSON may throw on spoofed objects that lack
+    // internal slots, so we intercept it.
+    const origToJSON = MDI.prototype.toJSON;
+    MDI.prototype.toJSON = disguise(function toJSON() {
+      if (_devData.has(this)) {
+        return { deviceId: this.deviceId, kind: this.kind,
+                 label: this.label, groupId: this.groupId };
+      }
+      if (origToJSON) return origToJSON.call(this);
+      return { deviceId: this.deviceId, kind: this.kind,
+               label: this.label, groupId: this.groupId };
+    }, 'toJSON', 0);
+
+    // Patch getCapabilities on InputDeviceInfo.prototype
+    if (IDI) {
+      const origGetCaps = (ORIG.getOwnPropertyDescriptor.call(Object, IDI.prototype, 'getCapabilities') || {}).value;
+      IDI.prototype.getCapabilities = disguise(function getCapabilities() {
+        if (_devData.has(this)) return {};
+        if (origGetCaps) return origGetCaps.call(this);
+        return {};
+      }, 'getCapabilities', 0);
+    }
+
+    // Stable device values — fresh wrapper objects created per call
+    const groupId = makeDeviceId(sessionSeed, 'group');
+    const deviceSpecs = [
+      { kind: 'audioinput',  deviceId: makeDeviceId(sessionSeed, 'audioinput'),  groupId: groupId, label: '' },
+      { kind: 'audiooutput', deviceId: makeDeviceId(sessionSeed, 'audiooutput'), groupId: groupId, label: '' },
+      { kind: 'videoinput',  deviceId: makeDeviceId(sessionSeed, 'videoinput'),  groupId: groupId, label: '' },
+    ];
+
+    // Patch at prototype level (not instance) — native location.
+    // Each call creates fresh device objects (distinct identity) with
+    // stable values (same deviceId/groupId/kind/label).
+    MediaDevices.prototype.enumerateDevices = disguise(function enumerateDevices() {
+      const devices = deviceSpecs.map(function(spec) {
+        const isInput = spec.kind === 'audioinput' || spec.kind === 'videoinput';
+        const proto = isInput && IDI ? IDI.prototype : MDI.prototype;
+        const dev = Object.create(proto);
+        _devData.set(dev, spec);
+        return dev;
+      });
+      return ORIG.promiseResolve.call(Promise, devices);
+    }, 'enumerateDevices', 0);
+  }
+
   // === Worker navigator override script ===
   // Shared by Worker, Module Worker, and SharedWorker wrappers below.
   // Hoisted here so it's in scope for all three constructor intercepts.
@@ -1484,5 +1591,10 @@
   // - WebRTC IP leak prevention (v2 item 10): background.js sets
   //   chrome.privacy.network.webRTCIPHandlingPolicy to
   //   default_public_interface_only. No MAIN-world override needed.
+  // - enumerateDevices spoofing (v2 item 11): overrides
+  //   navigator.mediaDevices.enumerateDevices() to return a stable,
+  //   low-entropy device list (1 audioinput, 1 audiooutput, 1 videoinput).
+  //   Device IDs are deterministic hex from session seed. Labels empty
+  //   (matches pre-permission browser behavior).
 
 })();
