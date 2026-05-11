@@ -216,14 +216,23 @@ test.describe('Session identity — rotation behavior (v2 item 1)', () => {
     const seedAfter1 = await page1.evaluate(() => sessionStorage.getItem('__pg_seed__'));
     const seedAfter2 = await page2.evaluate(() => sessionStorage.getItem('__pg_seed__'));
 
-    // Both tabs should have the same NEW seed
+    // Seed must have actually changed (rotateIdentity generates a new seed)
     expect(seedAfter1).toBeTruthy();
+    expect(seedAfter1).not.toBe(seedBefore);
+
+    // Both tabs should have the same NEW seed
     expect(seedAfter1).toBe(seedAfter2);
 
     // Both tabs should now have matching UA
     const uaAfter1 = await page1.evaluate(() => navigator.userAgent);
     const uaAfter2 = await page2.evaluate(() => navigator.userAgent);
     expect(uaAfter1).toBe(uaAfter2);
+
+    // UA should differ from pre-rotation in almost all cases.
+    // Theoretical collision possible if PRNG generates same profile from
+    // different seeds, but practically never happens with 2^32 seed space.
+    // We assert seed change (guaranteed) rather than UA change (probabilistic)
+    // to avoid flaky tests from degenerate collisions.
 
     // HTTP UA should also match
     const httpUA = await page1.evaluate(async () => {
@@ -238,6 +247,20 @@ test.describe('Session identity — rotation behavior (v2 item 1)', () => {
   });
 });
 
+/**
+ * Mode-switch semantics (documented per rowan gate review):
+ *
+ * Switching to per-tab mode affects NEWLY LOADED tabs only. Existing tabs
+ * retain their prior session seed in sessionStorage until the tab is reloaded
+ * or navigated. This is the intended behavior: anti-fingerprint.js runs at
+ * document_start and reads/writes __pg_seed__ at that time. A mode switch
+ * in the background does not retroactively re-inject seeds into already-loaded
+ * pages. The user sees divergent identities only on fresh navigations after
+ * the switch.
+ *
+ * Switching back to session mode + reloading converges tabs to the shared
+ * session seed via bridge.js desync detection (same as initial tab load).
+ */
 test.describe('Session identity — mode-switch transitions (v2 item 1)', () => {
   test('session→per-tab: fresh tabs get distinct seeds', async ({ context, extensionId }) => {
     // Switch to per-tab mode FIRST via popup
@@ -321,8 +344,8 @@ test.describe('Session identity — mode-switch transitions (v2 item 1)', () => 
   });
 });
 
-test.describe('Session identity — SW wake preservation (v2 item 1)', () => {
-  test('sessionSeed persists in chrome.storage.session', async ({ context }) => {
+test.describe('Session identity — storage persistence (v2 item 1)', () => {
+  test('sessionSeed stored in chrome.storage.session', async ({ context }) => {
     const sw = context.serviceWorkers()[0];
     expect(sw).toBeTruthy();
     // Poll for sessionSeed to be written (onInstalled creates identity)
@@ -339,7 +362,7 @@ test.describe('Session identity — SW wake preservation (v2 item 1)', () => {
     expect(typeof sessionSeed).toBe('number');
   });
 
-  test('profile persists in chrome.storage.session', async ({ context }) => {
+  test('profile stored in chrome.storage.session', async ({ context }) => {
     const sw = context.serviceWorkers()[0];
     expect(sw).toBeTruthy();
     let profile: any = null;

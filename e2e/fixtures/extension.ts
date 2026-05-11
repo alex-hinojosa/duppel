@@ -93,7 +93,12 @@ export const test = base.extend<{
     await page.goto(`http://127.0.0.1:${port}/`);
     await page.waitForLoadState('domcontentloaded');
 
-    // Allow anti-fingerprint.js to apply overrides (runs at document_start)
+    // Wait for desync-reload cycle: anti-fingerprint.js generates a random
+    // seed on first load; bridge.js detects the mismatch and background
+    // re-injects the correct session seed + reloads the tab. After this
+    // reload, JS and HTTP UA are guaranteed to match.
+    await page.waitForTimeout(800);
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(500);
 
     await use(page);
