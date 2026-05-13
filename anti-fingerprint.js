@@ -994,7 +994,7 @@
       if (param === 0x0D3D) return new Int32Array(activeGlCaps.viewportDims);        // MAX_VIEWPORT_DIMS
       if (param === 0x846E) return new Float32Array(activeGlCaps.lineWidthRange);    // ALIASED_LINE_WIDTH_RANGE
       if (param === 0x8460) return new Float32Array(activeGlCaps.pointSizeRange);    // ALIASED_POINT_SIZE_RANGE
-      if (param === 0x84FE) return activeGlCaps.maxAnisotropy;                       // MAX_ANISOTROPY (EXT)
+      if (param === 0x84FF) return activeGlCaps.maxAnisotropy;                       // MAX_TEXTURE_MAX_ANISOTROPY_EXT
       return origFn.call(this, param);
     }, "getParameter");
   }

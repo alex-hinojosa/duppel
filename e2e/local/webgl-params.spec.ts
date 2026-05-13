@@ -137,7 +137,7 @@ test.describe('WebGL parameter normalization', () => {
         available: true,
         hasMaxConst: 'MAX_TEXTURE_MAX_ANISOTROPY_EXT' in ext,
         hasTexConst: 'TEXTURE_MAX_ANISOTROPY_EXT' in ext,
-        maxAnisotropy: gl.getParameter(ext.TEXTURE_MAX_ANISOTROPY_EXT),
+        maxAnisotropy: gl.getParameter(ext.MAX_TEXTURE_MAX_ANISOTROPY_EXT),
       };
     });
     if (val === null) { test.skip(true, 'WebGL not available'); return; }
