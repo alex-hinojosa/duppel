@@ -1,6 +1,6 @@
 # PhantomGrid: Anti-Fingerprint Identity Spoofing for Chrome
 
-**A Chrome MV3 extension that defeats browser fingerprinting through deterministic identity spoofing, tracker data poisoning, and ultrasonic cross-device tracking defense.**
+**A Chrome MV3 extension that reduces browser fingerprint stability and closes known detection vectors through deterministic identity spoofing, tracker data poisoning, and ultrasonic cross-device tracking defense.**
 
 Built by a six-agent AI mesh (atlas, lux, rowan, snapdragon, + project agents) with human oversight. The architecture, code review, and bug resolution described below were performed entirely by AI agents collaborating through an asynchronous message-based coordination system.
 
@@ -80,7 +80,7 @@ Every spoofed value in a session derives from a single integer seed via Mulberry
 
 **Why:** Canvas fingerprinting is the second most common fingerprinting technique after navigator properties. A tracker draws specific text, gradients, and shapes to a hidden canvas, then reads the pixel data. The rendered output differs based on GPU, driver version, font rendering engine, anti-aliasing implementation, and sub-pixel rendering -- creating a hash that's unique to your hardware/software combination. `measureText` is a related vector: the exact width returned for a given string varies by font rendering engine and installed fonts.
 
-**Method:** Deterministic per-pixel noise using `hash(canvasSeed + pixelIndex + pixelValue)`. The noise is +/-1 per RGB channel -- enough to change the canvas hash (defeating exact-match fingerprinting) while being invisible to the human eye. The key design constraint is **determinism**: calling `toDataURL()` on the same canvas content must return the same result every time within a session. A non-deterministic approach (random noise) would be trivially detected by calling `toDataURL()` twice and comparing.
+**Method:** Deterministic per-pixel noise using `hash(canvasSeed + pixelIndex + pixelValue)`. The noise is +/-0-3 per RGB channel (7-state distribution: 25% zero-noise preserving original signal, 75% jitter across magnitudes 1-3) -- enough to change the canvas hash while being invisible to the human eye. Alpha channels are preserved (noise applies only to RGB). The key design constraint is **determinism**: calling `toDataURL()` on the same canvas content must return the same result every time within a session. A non-deterministic approach (random noise) would be trivially detected by calling `toDataURL()` twice and comparing.
 
 For `toDataURL` and `toBlob`, an offscreen clone canvas is created, the original content is drawn onto it, noise is applied, and the result is returned from the clone -- preventing visible corruption of canvases the user can see. `measureText` gets +/-0.1px deterministic noise derived from `hash(canvasSeed + text + font)`.
 
@@ -117,11 +117,19 @@ This technique was first documented by researchers studying the SilverPush SDK (
 
 ### 8. WebGL GPU Spoofing
 
-**What's spoofed:** `UNMASKED_VENDOR_WEBGL`, `UNMASKED_RENDERER_WEBGL` (via `getParameter`), `getSupportedExtensions()`
+**What's spoofed:** `UNMASKED_VENDOR_WEBGL`, `UNMASKED_RENDERER_WEBGL` (via `getParameter`), `getSupportedExtensions()`, `getExtension()`, `getShaderPrecisionFormat()`, `getParameter()` for capability limits (`MAX_TEXTURE_SIZE`, `MAX_VIEWPORT_DIMS`, `ALIASED_LINE_WIDTH_RANGE`, `ALIASED_POINT_SIZE_RANGE`, `MAX_VERTEX_ATTRIBS`, `MAX_FRAGMENT_UNIFORM_VECTORS`, `MAX_COMBINED_TEXTURE_IMAGE_UNITS`, `MAX_TEXTURE_MAX_ANISOTROPY_EXT`, and more), `readPixels()` (noise). All spoofs apply to both WebGL1 and WebGL2 contexts.
 
-**Why:** The WebGL debug renderer info is one of the highest-entropy fingerprinting surfaces. Your exact GPU model string (e.g., "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070, OpenGL 4.5)") combined with the supported WebGL extensions list can narrow identification to a very small group. The renderer string includes the GPU model, driver version format, and graphics API, all of which vary across hardware.
+**Why:** The WebGL debug renderer info is one of the highest-entropy fingerprinting surfaces. Your exact GPU model string (e.g., "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070, OpenGL 4.5)") combined with the supported WebGL extensions list can narrow identification to a very small group. Beyond vendor/renderer strings, capability parameters (`MAX_TEXTURE_SIZE`, viewport dimensions, aliased ranges) form a secondary fingerprint that varies by GPU generation and driver. Shader precision values (`getShaderPrecisionFormat`) differ across vendors. Extension availability and coherence (`getExtension` returning objects consistent with `getSupportedExtensions`) are probed by commercial fingerprinters. Any inconsistency between these surfaces is a detection signal.
 
-**Method:** GPU vendor/renderer are replaced with values from a correlated profile group (see Profile Coherence below). The extensions list is normalized to a common baseline of 20 widely-supported extensions, removing hardware-specific extensions that would leak real GPU identity.
+**Method:**
+
+- **Vendor/renderer:** Replaced with values from correlated profile groups (see Profile Coherence below).
+- **Profile-bucketed capability parameters:** GL capability limits are bucketed by renderer profile to prevent contradiction fingerprints. Five buckets (apple, intel_low, intel_mid, nvidia_mid, nvidia_high) map renderer strings to coherent cap sets. For example, an Apple M1 profile returns OpenGL 4.1-class limits (viewport 16384, line width [1,1]) while an NVIDIA RTX 4070 returns higher limits (max texture 32768). See `docs/anonymity-set-rationale.md` for the full bucket table.
+- **Typed-array returns:** Parameters that natively return typed arrays (`MAX_VIEWPORT_DIMS` as `Int32Array`, `ALIASED_LINE_WIDTH_RANGE` and `ALIASED_POINT_SIZE_RANGE` as `Float32Array`) preserve their native return types. Fingerprinters probe `instanceof` on these returns.
+- **Shader precision normalization:** `getShaderPrecisionFormat()` calls the real native method and mutates the numeric fields (`rangeMin`, `rangeMax`, `precision`) on the returned `WebGLShaderPrecisionFormat` object via `Object.defineProperty`. This preserves the native prototype chain, `instanceof`, constructor identity, and `Object.prototype.toString` tag -- all of which fingerprinters probe to detect plain-object substitution.
+- **Extension coherence:** `getSupportedExtensions()` returns a normalized baseline of 20 common extensions. `getExtension()` is wrapped to return `null` for extensions not in the advertised set (preventing inconsistency) and passes through real extension objects for advertised extensions. `WEBGL_debug_renderer_info` and `EXT_texture_filter_anisotropic` return coherent objects with correct constants matching `getParameter` return values.
+- **readPixels noise:** `readPixels()` on RGBA/UNSIGNED_BYTE reads gets the same deterministic pixel noise as canvas 2D, preventing GPU fingerprinting via rendered framebuffer extraction (used by FingerprintJS commercial).
+- **OffscreenCanvas:** `OffscreenCanvas.convertToBlob()` and `OffscreenCanvasRenderingContext2D.getImageData()` are both noised with the same seed as canvas 2D, preventing the common bypass where fingerprinters use OffscreenCanvas to evade HTMLCanvasElement-only defenses.
 
 ### 9. Timezone Spoofing (DST-Aware)
 
@@ -229,16 +237,16 @@ The review loop worked exactly as designed on this bug. I had my hands on the co
 
 ---
 
-## Known Limitations (v1)
+## Known Limitations
 
 These are explicitly documented, not hidden:
 
-- **First navigation timing:** The HTTP User-Agent header on the initial page load cannot match the page's JS identity because the seed isn't known until after the page loads. The test protocol is: load once to seed, reload the same tab, then inspect.
+- **First navigation timing:** On the very first navigation to a new origin, the HTTP User-Agent header may not match the page's JS identity because the seed isn't known until after the page loads. A silent correction mechanism (v2 item 2) aligns sessionStorage without a reload on subsequent same-origin navigations, but the initial request carries the pre-seed UA.
 - **Global UA rule:** Chrome's `declarativeNetRequest` applies one UA header rule globally. The active tab's identity controls the header; background tabs may carry a different tab's UA.
-- **Firefox personas on Chrome:** The profile pool includes Firefox UAs, but a Chrome browser can't plausibly emulate Firefox's rendering engine, TLS characteristics, or API surface. Phase 2 will collapse to Chromium-family profiles only.
+- **Firefox personas on Chrome:** The profile pool includes Firefox UAs, but a Chrome browser can't plausibly emulate Firefox's rendering engine, TLS characteristics, or API surface.
 - **Canvas uniqueness:** The deterministic noise produces a session-unique canvas hash. amiunique will report 0.00% similarity -- the canvas fingerprint is unique, just different from your real one. Crowd-blending (making many users share the same canvas output) requires a different approach.
-- **OffscreenCanvas / WebGL readPixels:** Not yet covered. A fingerprinting service that uses `OffscreenCanvas`, `WebGL readPixels`, or worker-based canvas operations can bypass the current canvas hooks.
-- **Function.prototype.toString:** Sophisticated detection can inspect property descriptors and `Function.prototype.toString.call(getter)` to identify overridden getters. Phase 2 will add native-shaped descriptors.
+- **Extension list breadth:** The normalized WebGL extension list (20 extensions) may be broader than some hosts' true native support. An extension listed in `getSupportedExtensions()` that passes through to a native `getExtension()` returning null on specific hardware would create a coherence gap. Currently mitigated by selecting widely-supported extensions; future hardening may tighten the list per-platform.
+- **Cross-origin iframe identity:** Cross-origin iframes generate independent seeds due to content-script model limitations. The HTTP User-Agent header still matches (set globally via declarativeNetRequest), but JS-level fingerprints in cross-origin iframes may differ from the top frame.
 
 ---
 
