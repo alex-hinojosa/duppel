@@ -1,4 +1,4 @@
-# PhantomGrid: Anti-Fingerprint Identity Spoofing for Chrome
+# PhantomGrid v2: Anti-Fingerprint Identity Spoofing for Chrome
 
 **A Chrome MV3 extension that reduces browser fingerprint stability and closes known detection vectors through deterministic identity spoofing, tracker data poisoning, and ultrasonic cross-device tracking defense.**
 
@@ -60,11 +60,11 @@ Every spoofed value in a session derives from a single integer seed via Mulberry
 
 ### 3. Screen and Viewport Dimensions
 
-**What's spoofed:** `screen.width`, `screen.height`, `screen.availWidth`, `screen.availHeight`, `screen.colorDepth`, `screen.pixelDepth`, `window.innerWidth`, `window.innerHeight`, `window.outerWidth`, `window.outerHeight`, `window.devicePixelRatio`, `window.visualViewport.width/height/scale`
+**What's spoofed:** `screen.width`, `screen.height`, `screen.availWidth`, `screen.availHeight`, `screen.colorDepth`, `screen.pixelDepth`, `window.innerWidth`, `window.innerHeight`, `window.outerWidth`, `window.outerHeight`, `window.devicePixelRatio`, `window.visualViewport.width/height/scale`, `window.screenX`, `window.screenY`, `screen.availLeft`, `screen.availTop`
 
-**Why:** Screen resolution is one of the highest-entropy fingerprinting surfaces. The combination of screen dimensions + DPR + available height (which varies by taskbar size and OS) creates a near-unique identifier. `visualViewport` is a newer API that some fingerprinting services cross-reference against `innerWidth`/`innerHeight` -- any inconsistency between them is a spoofing detection signal.
+**Why:** Screen resolution is one of the highest-entropy fingerprinting surfaces. The combination of screen dimensions + DPR + available height (which varies by taskbar size and OS) creates a near-unique identifier. `visualViewport` is a newer API that some fingerprinting services cross-reference against `innerWidth`/`innerHeight` -- any inconsistency between them is a spoofing detection signal. Window position properties (`screenX/Y`, `availLeft/Top`) leak multi-monitor setup information -- a secondary display at x=1920 reveals you have two monitors, which narrows identification.
 
-**Method:** Dimensions are selected from a pool of 9 common resolutions (1920x1080 through 3840x2160). `devicePixelRatio` is set to 2 for 4K resolutions and 1 for everything else, matching real-world behavior. Browser chrome height (the gap between inner and outer height) is derived deterministically from the canvas seed to vary realistically between 80-120px. All viewport-related surfaces are patched consistently to prevent cross-surface comparison attacks.
+**Method:** Dimensions are selected from a pool of 9 common resolutions (1920x1080 through 3840x2160). `devicePixelRatio` is set to 2 for 4K resolutions and 1 for everything else, matching real-world behavior. Browser chrome height (the gap between inner and outer height) is derived deterministically from the canvas seed to vary realistically between 80-120px. All viewport-related surfaces are patched consistently to prevent cross-surface comparison attacks. Screen position properties all return 0, presenting a single-monitor appearance. `MouseEvent` screen coordinates are preserved (they reflect cursor position within the window, not monitor layout).
 
 ### 4. CSS Media Queries (matchMedia)
 
@@ -183,6 +183,63 @@ This technique was first documented by researchers studying the SilverPush SDK (
 - **Chaos:** 5-15 beacons every 1-3 minutes. Lab/testing only.
 
 Timing uses variable intervals that mimic human browsing rhythm rather than fixed alarm cadence.
+
+**DOM chaff:** In addition to beacon traffic, PhantomGrid injects plausible data attributes onto page elements after user interaction (click, scroll). This poisons DOM-scraping trackers that read element attributes for session tracking. Injection is interaction-coupled (no chaff fires without a real user event) and checks for attribute collisions before writing. Tracking pixels are injected as 1x1 image elements with ad-tech source URLs.
+
+### 15. Global Privacy Control (GPC)
+
+**What's spoofed:** `navigator.globalPrivacyControl` (JavaScript property) and the `Sec-GPC` HTTP request header
+
+**Why:** The Global Privacy Control signal tells websites "do not sell or share my personal information" under the California Consumer Privacy Act (CCPA) and similar regulations. Some browsers set this natively; Chrome does not. Advertising the GPC signal is both a privacy assertion and a fingerprinting consideration -- the presence or absence of GPC is itself a data point that narrows identification.
+
+**Method:** `navigator.globalPrivacyControl` is set to `true` via a hardened `spoof()` getter that survives property assignment attempts, has native-shaped property descriptors, and passes `Function.prototype.toString` probes. The `Sec-GPC: 1` HTTP header is added to all outbound requests via a `declarativeNetRequest` rule, ensuring the signal is present at both the JavaScript and network layers.
+
+### 16. Tracking Query Parameter Stripping
+
+**What it does:** Strips 17 known tracking parameters from navigation URLs before the request reaches the server
+
+**Why:** Ad-tech platforms append tracking identifiers to URLs -- `utm_source`, `fbclid`, `gclid`, `msclkid`, and others -- to track users across click-throughs. These parameters persist in browser history, bookmarks, and shared links, creating a durable cross-site tracking vector. Firefox and Brave strip these natively; Chrome does not.
+
+**Method:** A static `declarativeNetRequest` redirect rule uses `queryTransform.removeParams` to strip 17 tracking parameters (`utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `utm_id`, `fbclid`, `gclid`, `dclid`, `msclkid`, `yclid`, `twclid`, `mc_eid`, `_ga`, `_gl`, `_hsenc`, `_openstat`) from main-frame and sub-frame navigations. Non-tracking parameters and URL fragments are preserved. The stripping happens at the network layer before the request is sent, so the server never sees the tracking parameter.
+
+### 17. Cross-Origin Referrer Trimming
+
+**What it does:** Trims or removes the `Referer` HTTP header and `document.referrer` on cross-origin navigations
+
+**Why:** The `Referer` header leaks the full URL of the previous page to every resource loaded on the next page. On cross-origin navigations, this reveals your browsing path to third parties. A search query in the URL (`?q=medical+condition`) sent via `Referer` to an ad network is a textbook privacy violation that still happens by default in Chrome.
+
+**Method:** A `declarativeNetRequest` rule trims cross-origin `Referer` headers to origin-only (e.g., `https://example.com/search?q=secret` becomes `https://example.com/`). Third-party sub-resource requests (different eTLD+1) have `Referer` removed entirely. Same-origin referrers are preserved (they don't leak information to new parties). On the JavaScript side, `document.referrer` is spoofed as a belt-and-suspenders measure: cross-origin referrers are trimmed to origin-only, matching the network-layer behavior.
+
+### 18. WebRTC IP Leak Prevention
+
+**What it does:** Prevents WebRTC from exposing private/local IP addresses through ICE candidate gathering
+
+**Why:** WebRTC's ICE protocol discovers all network interfaces to find the best path for peer-to-peer connections. As a side effect, it exposes private IP addresses (192.168.x.x, 10.x.x.x) and sometimes public IPs even when using a VPN. A single `RTCPeerConnection` with a STUN server can extract your real IP in under a second -- a technique actively used by fingerprinting services. This is arguably the most direct privacy leak in the browser: your actual network address, not a derived fingerprint.
+
+**Method:** Chrome's `chrome.privacy.network.webRTCIPHandlingPolicy` is set to `default_public_interface_only`. This restricts ICE candidate gathering to the default public interface, preventing enumeration of all network interfaces. This approach was chosen over the more aggressive `disable_non_proxied_udp` (relay-only mode) because relay-only is detectable as a fingerprinting signal and breaks WebRTC applications that don't have a TURN server configured. The policy is applied at extension install and on every service worker startup.
+
+### 19. Device Enumeration Spoofing
+
+**What's spoofed:** `navigator.mediaDevices.enumerateDevices()`
+
+**Why:** `enumerateDevices()` returns the list of all audio and video input/output devices connected to the system. The number of devices, their `deviceId` hashes (which are origin-scoped but stable), and their `kind` and `groupId` values create a device fingerprint. A laptop with a built-in mic, built-in speakers, external headphones, and two webcams has a distinctive device signature that's stable across sessions.
+
+**Method:** Returns a fixed set of 3 spoofed devices: one `audioinput`, one `audiooutput`, one `videoinput` (the common laptop configuration). Device IDs are 64-character hex strings derived deterministically from the session seed. Labels are empty (matching browser behavior before `getUserMedia` permission is granted). All devices share a single `groupId` (single-device-group, common on laptops). Device objects use `Object.create(InputDeviceInfo.prototype)` / `Object.create(MediaDeviceInfo.prototype)` with no own properties -- property getters are patched on the prototypes via `spoof()` and read from a `WeakMap`. This preserves `instanceof`, prototype chains, `Object.getOwnPropertyDescriptor` shapes, `toJSON()`, and `getCapabilities()` -- all of which fingerprinters probe to detect synthetic device objects. Fresh object identities are created per call (as the native API does), but values are stable across calls within a session.
+
+### 20. Behavioral Biometric Precision-Reduction
+
+**What's defended:** `Event.timeStamp`, `performance.now()`, `MouseEvent` coordinates (`clientX/Y`, `screenX/Y`, `pageX/Y`, `x/y`), `WheelEvent` deltas (`deltaX`, `deltaY`, `deltaZ`)
+
+**Why:** Behavioral biometric classifiers (ThreatMetrix, Trusteer, FingerprintJS Bot Detection) build user profiles from micro-patterns in mouse movement, scroll behavior, and keystroke timing. The precision of browser event data enables these classifiers: sub-millisecond timestamps reveal typing cadence, sub-pixel mouse coordinates reveal tremor patterns, and fractional scroll deltas reveal trackpad vs. mouse. This isn't fingerprinting in the traditional sense (it identifies the *person*, not the *device*), but it uses the same browser APIs and the defense is the same: reduce precision to raise classifier cost.
+
+**Method:** Three precision-reduction layers, all using hash-based truncated Gaussian noise (Box-Muller transform) for non-uniform distribution:
+
+- **Event timestamps:** Quantized to 1ms resolution with +/-1ms Gaussian jitter (sigma=0.5, bound=1.0). Applied only to trusted (user-initiated) events; synthetic events are passed through unmodified.
+- **performance.now():** Quantized to 0.1ms resolution with +/-0.1ms Gaussian jitter (sigma=0.03, bound=0.1). Monotonic clamp prevents backward time movement.
+- **Mouse coordinates:** +/-0-1px Gaussian noise per axis (sigma=0.4, bound=1.0), rounded to integer. Applied to `clientX/Y`, `screenX/Y`, `pageX/Y`, and `x/y` aliases. Synthetic events are skipped (same isTrusted check as timestamps).
+- **Wheel deltas:** Integer quantization removes sub-pixel trackpad precision, normalizing trackpad scrolling to look like mouse wheel scrolling. Synthetic events passed through.
+
+This is precision reduction, not biometric spoofing -- it raises the cost and noise floor for classifiers without attempting to simulate a different person's behavior.
 
 ---
 
