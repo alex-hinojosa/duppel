@@ -100,6 +100,30 @@ test.describe('Canvas noise', () => {
     expect(result).toBe(true);
   });
 
+  test('noise amplitude exceeds ±1', async ({ extensionPage }) => {
+    // Fill canvas with solid color (128,128,128) — predictable unnoised value.
+    // With ±0-3 noise, some pixels should differ by more than 1 from 128.
+    const result = await extensionPage.evaluate(() => {
+      const c = document.getElementById('c') as HTMLCanvasElement;
+      const ctx = c.getContext('2d')!;
+      ctx.fillStyle = '#808080';
+      ctx.fillRect(0, 0, c.width, c.height);
+
+      const id = ctx.getImageData(0, 0, c.width, c.height);
+      let maxDelta = 0;
+      for (let i = 0; i < id.data.length; i += 4) {
+        // Check RGB channels (skip alpha)
+        for (let ch = 0; ch < 3; ch++) {
+          const delta = Math.abs(id.data[i + ch] - 128);
+          if (delta > maxDelta) maxDelta = delta;
+        }
+      }
+      return maxDelta;
+    });
+    // With ±0-3 noise, max delta should be > 1 across 200x50x3 = 30000 channels
+    expect(result).toBeGreaterThan(1);
+  });
+
   test('toBlob stable across 5 calls', async ({ extensionPage }) => {
     const result = await extensionPage.evaluate(async () => {
       const c = document.getElementById('c') as HTMLCanvasElement;

@@ -55,10 +55,12 @@
   if (typeof WebGLRenderingContext !== "undefined") {
     ORIG.glGetParameter = WebGLRenderingContext.prototype.getParameter;
     ORIG.glReadPixels = WebGLRenderingContext.prototype.readPixels;
+    ORIG.glGetShaderPrecisionFormat = WebGLRenderingContext.prototype.getShaderPrecisionFormat;
   }
   if (typeof WebGL2RenderingContext !== "undefined") {
     ORIG.gl2GetParameter = WebGL2RenderingContext.prototype.getParameter;
     ORIG.gl2ReadPixels = WebGL2RenderingContext.prototype.readPixels;
+    ORIG.gl2GetShaderPrecisionFormat = WebGL2RenderingContext.prototype.getShaderPrecisionFormat;
   }
   if (typeof OffscreenCanvas !== "undefined") {
     ORIG.offscreenConvertToBlob = OffscreenCanvas.prototype.convertToBlob;
@@ -833,7 +835,7 @@
   // Offscreen clone prevents visible canvas corruption (lux review).
   // Always wraps from ORIG references, never from current prototype (rowan pass 2).
 
-  // Fast deterministic hash: derive a ±1 noise value from seed + position + pixel value.
+  // Fast deterministic hash: derive a ±0-3 noise value from seed + position + pixel value.
   // Uses a simple xorshift-like mixing function instead of a PRNG.
   function pixelNoise(seed, i, val) {
     let h = seed ^ (i * 2654435761);
@@ -841,10 +843,14 @@
     h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
     h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
     h = (h ^ (h >>> 16)) >>> 0;
-    return (h & 1) ? 1 : -1;
+    // ±0-3 noise with weighted distribution: creates larger equivalence
+    // classes than ±1 while remaining visually imperceptible. Uses 3 bits
+    // of hash for magnitude (0-3) and 1 bit for sign.
+    const magnitude = (h >>> 1) & 3;
+    return (h & 1) ? magnitude : -magnitude;
   }
 
-  // Apply deterministic ±1 noise to an ImageData's RGB channels in-place.
+  // Apply deterministic ±0-3 noise to an ImageData's RGB channels in-place.
   function applyCanvasNoise(px, seed) {
     for (let i = 0; i < px.length; i += 4) {
       px[i]   = Math.max(0, Math.min(255, px[i]   + pixelNoise(seed, i, px[i])));
@@ -915,10 +921,30 @@
   }, "measureText");
 
   // === WebGL fingerprint spoofing ===
+  // WebGL capability parameters leak hardware identity through unique
+  // combinations of limits. Normalize to common values matching a
+  // mid-range GPU (Intel UHD 630 / RTX 3060 class).
+  const GL_PARAM_SPOOFS = {
+    0x0D33: 16384,    // MAX_TEXTURE_SIZE
+    0x851C: 16384,    // MAX_CUBE_MAP_TEXTURE_SIZE
+    0x84E8: 16384,    // MAX_RENDERBUFFER_SIZE
+    0x8869: 16,       // MAX_VERTEX_ATTRIBS
+    0x8872: 4096,     // MAX_VERTEX_UNIFORM_VECTORS
+    0x8B4C: 16,       // MAX_VERTEX_TEXTURE_IMAGE_UNITS
+    0x8871: 30,       // MAX_VARYING_VECTORS
+    0x8824: 1024,     // MAX_FRAGMENT_UNIFORM_VECTORS
+    0x8B4D: 16,       // MAX_TEXTURE_IMAGE_UNITS
+    0x8B4A: 32,       // MAX_COMBINED_TEXTURE_IMAGE_UNITS
+  };
   function spoofGlGetParameter(origFn) {
     return disguise(function(param) {
       if (param === 0x9245) return profile.gpu.vendor;
       if (param === 0x9246) return profile.gpu.renderer;
+      if (GL_PARAM_SPOOFS[param] !== undefined) return GL_PARAM_SPOOFS[param];
+      if (param === 0x0D3D) return new Int32Array([32767, 32767]); // MAX_VIEWPORT_DIMS
+      if (param === 0x846E) return new Float32Array([1, 1]);        // ALIASED_LINE_WIDTH_RANGE
+      if (param === 0x8460) return new Float32Array([1, 1024]);     // ALIASED_POINT_SIZE_RANGE
+      if (param === 0x84FE) return 16;                              // MAX_ANISOTROPY (EXT)
       return origFn.call(this, param);
     }, "getParameter");
   }
@@ -950,6 +976,22 @@
   }
   if (typeof WebGL2RenderingContext !== "undefined") {
     WebGL2RenderingContext.prototype.getSupportedExtensions = spoofedGetSupportedExtensions;
+  }
+
+  // === WebGL getShaderPrecisionFormat normalization ===
+  // Shader precision varies by GPU: mantissa bits, range min/max differ
+  // across vendors. Normalize to highp everywhere (standard float: 23-bit
+  // mantissa, [-127, 127] range) — common on desktop GPUs.
+  function spoofGetShaderPrecisionFormat(origFn) {
+    return disguise(function(shaderType, precisionType) {
+      return { rangeMin: 127, rangeMax: 127, precision: 23 };
+    }, "getShaderPrecisionFormat");
+  }
+  if (ORIG.glGetShaderPrecisionFormat) {
+    WebGLRenderingContext.prototype.getShaderPrecisionFormat = spoofGetShaderPrecisionFormat(ORIG.glGetShaderPrecisionFormat);
+  }
+  if (ORIG.gl2GetShaderPrecisionFormat) {
+    WebGL2RenderingContext.prototype.getShaderPrecisionFormat = spoofGetShaderPrecisionFormat(ORIG.gl2GetShaderPrecisionFormat);
   }
 
   // === WebGL readPixels noise (v2 item 5) ===
