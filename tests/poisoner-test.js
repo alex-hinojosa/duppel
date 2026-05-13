@@ -611,8 +611,8 @@
   // DOM CHAFF CONFIG GENERATION (v2 item 4)
   // ================================================================
 
-  function testDOMChaffConfigGeneration() {
-    suite("DOM chaff config generation (v2 item 4)");
+  function testDOMChaffPayloadGeneration() {
+    suite("DOM chaff payload generation (v2 item 4 corrective)");
 
     // AD_CONTAINER_SELECTORS defined and non-empty
     assert(Array.isArray(POISONER.AD_CONTAINER_SELECTORS) && POISONER.AD_CONTAINER_SELECTORS.length > 0,
@@ -635,67 +635,64 @@
 
     POISONER.selectPersona();
 
-    // Stealth: 1 config
-    const stealthConfigs = POISONER.buildDOMChaffConfigs("stealth");
-    assert(Array.isArray(stealthConfigs) && stealthConfigs.length === 1,
-      "Stealth buildDOMChaffConfigs returns 1 config",
-      "Stealth returned " + (stealthConfigs || []).length + " configs (expected 1)");
+    // Payload shape validation
+    const payload = POISONER.buildDOMChaffPayload("balanced");
+    assert(typeof payload === "object" && payload !== null,
+      "buildDOMChaffPayload returns an object",
+      "buildDOMChaffPayload returned: " + typeof payload);
 
-    // Balanced: 1-2 configs
-    let balancedOk = true;
-    for (let i = 0; i < 10; i++) {
-      const configs = POISONER.buildDOMChaffConfigs("balanced");
-      if (!Array.isArray(configs) || configs.length < 1 || configs.length > 2) {
-        balancedOk = false;
-        assert(false, "",
-          "Balanced DOM chaff returned " + (configs || []).length + " configs (expected 1-2)");
-        break;
-      }
-    }
-    if (balancedOk) {
-      assert(true, "Balanced buildDOMChaffConfigs returns 1-2 configs (10 samples)", "");
-    }
+    // Sends ALL selectors (bridge.js does DOM querying)
+    assert(Array.isArray(payload.selectors) && payload.selectors.length === POISONER.AD_CONTAINER_SELECTORS.length,
+      "Payload includes all " + POISONER.AD_CONTAINER_SELECTORS.length + " selectors",
+      "Payload selectors count: " + (payload.selectors || []).length);
 
-    // Chaos: 1-5 configs
-    let chaosOk = true;
-    for (let i = 0; i < 10; i++) {
-      const configs = POISONER.buildDOMChaffConfigs("chaos");
-      if (!Array.isArray(configs) || configs.length < 1 || configs.length > 5) {
-        chaosOk = false;
-        assert(false, "",
-          "Chaos DOM chaff returned " + (configs || []).length + " configs (expected 1-5)");
-        break;
-      }
-    }
-    if (chaosOk) {
-      assert(true, "Chaos buildDOMChaffConfigs returns 1-5 configs (10 samples)", "");
-    }
+    // maxTargets by chaos level
+    const stealth = POISONER.buildDOMChaffPayload("stealth");
+    assert(stealth.maxTargets === 1,
+      "Stealth maxTargets is 1",
+      "Stealth maxTargets: " + stealth.maxTargets);
 
-    // Config shape validation
-    const cfg = POISONER.buildDOMChaffConfigs("balanced")[0];
-    assert(typeof cfg.selector === "string",
-      "Config has string selector: " + cfg.selector,
-      "Config selector is not a string");
+    const balanced = POISONER.buildDOMChaffPayload("balanced");
+    assert(balanced.maxTargets === 2,
+      "Balanced maxTargets is 2",
+      "Balanced maxTargets: " + balanced.maxTargets);
 
-    assert(Array.isArray(cfg.attributes) && cfg.attributes.length >= 2,
-      "Config has 2+ attributes: " + cfg.attributes.length,
-      "Config attributes missing or too few: " + (cfg.attributes || []).length);
+    const chaos = POISONER.buildDOMChaffPayload("chaos");
+    assert(chaos.maxTargets === 5,
+      "Chaos maxTargets is 5",
+      "Chaos maxTargets: " + chaos.maxTargets);
 
-    assert(typeof cfg.injectPixel === "boolean",
-      "Config has boolean injectPixel: " + cfg.injectPixel,
-      "Config injectPixel is not boolean: " + typeof cfg.injectPixel);
+    // attributeSets has maxTargets entries
+    assert(Array.isArray(payload.attributeSets) && payload.attributeSets.length === payload.maxTargets,
+      "attributeSets has " + payload.maxTargets + " entries (one per target)",
+      "attributeSets count: " + (payload.attributeSets || []).length);
 
-    // Attribute shape: each has key and value strings, keys are data-* prefixed
+    // Each attribute set has 2-3 entries with data-* keys
     let attrValid = true;
-    for (const attr of cfg.attributes) {
-      if (typeof attr.key !== "string" || typeof attr.value !== "string" || !attr.key.startsWith("data-")) {
+    for (const attrSet of payload.attributeSets) {
+      if (!Array.isArray(attrSet) || attrSet.length < 2 || attrSet.length > 3) {
         attrValid = false;
         break;
       }
+      for (const attr of attrSet) {
+        if (typeof attr.key !== "string" || typeof attr.value !== "string" || !attr.key.startsWith("data-")) {
+          attrValid = false;
+          break;
+        }
+      }
     }
     assert(attrValid,
-      "All attributes have string key (data-* prefixed) and string value",
-      "Some attributes have invalid shape");
+      "All attribute sets have 2-3 entries with data-* keys",
+      "Some attribute sets have invalid shape");
+
+    // pixelChance and pixelSrc present
+    assert(typeof payload.pixelChance === "number" && payload.pixelChance > 0 && payload.pixelChance < 1,
+      "pixelChance is a probability: " + payload.pixelChance,
+      "pixelChance invalid: " + payload.pixelChance);
+
+    assert(typeof payload.pixelSrc === "string" && payload.pixelSrc.startsWith("data:"),
+      "pixelSrc is a data URI",
+      "pixelSrc invalid: " + (payload.pixelSrc || "").substring(0, 30));
   }
 
   // ================================================================
@@ -718,7 +715,7 @@
     await testFireUsesConfig();
     testDNRChaffCompatibility();
     testChaffSendBeaconAvailability();
-    testDOMChaffConfigGeneration();
+    testDOMChaffPayloadGeneration();
 
     updateSummary();
   }

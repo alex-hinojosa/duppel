@@ -69,6 +69,7 @@
   // naturally (content script re-runs). Only one armed batch at a
   // time — new configs replace the pending batch, not stack.
   let _chaffQueue = null; // null = no armed batch
+  let _domChaffPayload = null; // DOM chaff payload, fired alongside beacons
   let _chaffListenersActive = false;
   let _chaffFallbackTimer = null; // singleton 5-min fallback timer
 
@@ -76,7 +77,9 @@
     if (!_chaffQueue || _chaffQueue.length === 0) return;
 
     const configs = _chaffQueue;
+    const domPayload = _domChaffPayload;
     _chaffQueue = null;
+    _domChaffPayload = null;
     _clearChaffFallbackTimer();
     _removeChaffListeners();
 
@@ -120,6 +123,18 @@
         }
       }, i * (50 + Math.floor(Math.random() * 250)));
     });
+
+    // DOM chaff: apply on the same interaction trigger as network beacons
+    // (rowan blocker 1 fix). DOM mutations are page-visible, so they must
+    // be temporally coupled to user action to avoid MutationObserver detection.
+    if (domPayload) {
+      const count = _applyDOMChaff(domPayload);
+      if (count > 0) {
+        try {
+          chrome.runtime.sendMessage({ type: "domChaffApplied", count: count });
+        } catch(e) {}
+      }
+    }
   }
 
   function _onChaffInteraction() {
@@ -164,41 +179,70 @@
   }
 
   // === DOM Chaff — attribute injection into ad containers (v2 item 4) ===
-  // Applies HTML-attribute-level chaff metadata to existing ad/tracker
-  // containers found on the page. One-shot per page load (no mutation
-  // observer, no repeated injection). Uses data: URI pixels only —
-  // no network requests from DOM chaff path.
+  // Queries ALL candidate selectors against the live DOM, collects actual
+  // matches, samples up to maxTargets, and applies attributes + optional
+  // pixel. One-shot per page load — guard consumed ONLY after at least one
+  // real mutation (rowan blocker 2 fix). Counts actual mutations, not just
+  // matched containers (rowan medium 3 fix).
   let _domChaffApplied = false;
 
-  function _applyDOMChaff(configs) {
+  function _applyDOMChaff(payload) {
     if (_domChaffApplied) return 0;
-    _domChaffApplied = true;
+    if (!payload || !Array.isArray(payload.selectors)) return 0;
 
-    let applied = 0;
-    for (const cfg of configs) {
-      let el;
-      try { el = document.querySelector(cfg.selector); } catch(e) { continue; }
-      if (!el) continue;
+    // Query all candidate selectors, collect unique matching elements
+    var matchedEls = [];
+    var seen = new Set();
+    for (var s = 0; s < payload.selectors.length; s++) {
+      try {
+        var el = document.querySelector(payload.selectors[s]);
+        if (el && !seen.has(el)) {
+          seen.add(el);
+          matchedEls.push(el);
+        }
+      } catch(e) {}
+    }
 
-      for (const attr of cfg.attributes) {
-        if (!el.hasAttribute(attr.key)) {
-          el.setAttribute(attr.key, attr.value);
+    // No matches — do NOT consume the one-shot guard
+    if (matchedEls.length === 0) return 0;
+
+    // Sample up to maxTargets from actual matches
+    var targets = matchedEls.slice(0, payload.maxTargets || 1);
+
+    var modified = 0;
+    for (var i = 0; i < targets.length; i++) {
+      var target = targets[i];
+      var attrs = payload.attributeSets && payload.attributeSets[i]
+        ? payload.attributeSets[i]
+        : (payload.attributeSets && payload.attributeSets[0] ? payload.attributeSets[0] : []);
+      var thisModified = false;
+
+      // Inject attributes — skip if attribute already exists (collision safety)
+      for (var a = 0; a < attrs.length; a++) {
+        if (!target.hasAttribute(attrs[a].key)) {
+          target.setAttribute(attrs[a].key, attrs[a].value);
+          thisModified = true;
         }
       }
 
-      if (cfg.injectPixel && cfg.pixelSrc) {
-        const img = document.createElement("img");
-        img.src = cfg.pixelSrc;
+      // Pixel injection (probabilistic per-target)
+      if (Math.random() < (payload.pixelChance || 0) && payload.pixelSrc) {
+        var img = document.createElement("img");
+        img.src = payload.pixelSrc;
         img.width = 1;
         img.height = 1;
         img.style.cssText = "position:absolute;left:-9999px;top:-9999px;opacity:0;pointer-events:none;";
         img.setAttribute("data-ad-status", "filled");
-        el.appendChild(img);
+        target.appendChild(img);
+        thisModified = true;
       }
 
-      applied++;
+      if (thisModified) modified++;
     }
-    return applied;
+
+    // Consume one-shot ONLY after real mutation
+    if (modified > 0) _domChaffApplied = true;
+    return modified;
   }
 
   // === Listen for messages from background ===
@@ -211,6 +255,9 @@
       if (window !== window.top) return;
 
       _chaffQueue = msg.configs;
+      // DOM chaff payload rides alongside network configs (rowan blocker 1).
+      // Applied in _fireChaffBatch() on the same interaction trigger.
+      _domChaffPayload = msg.domChaff || null;
       _setupChaffListeners();
 
       // Singleton fallback timer: clear any previous timer before arming.
@@ -220,21 +267,6 @@
         _chaffFallbackTimer = null;
         if (_chaffQueue) _fireChaffBatch();
       }, 5 * 60 * 1000);
-    } else if (msg.type === "queueDOMChaff" && Array.isArray(msg.configs)) {
-      if (window !== window.top) return;
-      if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", function() {
-          const count = _applyDOMChaff(msg.configs);
-          try {
-            chrome.runtime.sendMessage({ type: "domChaffApplied", count: count });
-          } catch(e) {}
-        }, { once: true });
-      } else {
-        const count = _applyDOMChaff(msg.configs);
-        try {
-          chrome.runtime.sendMessage({ type: "domChaffApplied", count: count });
-        } catch(e) {}
-      }
     }
   });
 

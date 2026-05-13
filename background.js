@@ -366,27 +366,16 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
               (tab.url.startsWith("http://") || tab.url.startsWith("https://"))) {
             // Send configs to bridge.js — it queues and fires on interaction.
             // Stats NOT incremented here; bridge.js sends chaffFired when done.
+            // DOM chaff payload rides alongside network configs in the same
+            // message. bridge.js applies DOM mutations on the same interaction
+            // trigger as beacons (rowan blocker 1 fix).
+            const domPayload = POISONER.buildDOMChaffPayload(STATE.chaosLevel);
             await chrome.tabs.sendMessage(tab.id, {
               type: "queueChaff",
               configs: configs,
+              domChaff: domPayload,
             });
             usedPageContext = true;
-
-            // DOM chaff: send attribute injection configs alongside network chaff.
-            // Uses same tab, same interaction window. One-shot per page load
-            // (bridge.js enforces _domChaffApplied guard).
-            const domConfigs = POISONER.buildDOMChaffConfigs(STATE.chaosLevel);
-            if (domConfigs.length > 0) {
-              for (const dc of domConfigs) {
-                if (dc.injectPixel) dc.pixelSrc = POISONER.PIXEL_GIF;
-              }
-              try {
-                await chrome.tabs.sendMessage(tab.id, {
-                  type: "queueDOMChaff",
-                  configs: domConfigs,
-                });
-              } catch(e) {}
-            }
           }
         } catch(e) {
           // sendMessage failed (no content script, restricted page, etc.)
@@ -625,25 +614,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
           if (tab && tab.id && tab.url &&
               (tab.url.startsWith("http://") || tab.url.startsWith("https://"))) {
+            const domPayload = POISONER.buildDOMChaffPayload(STATE.chaosLevel);
             await chrome.tabs.sendMessage(tab.id, {
               type: "queueChaff",
               configs: configs,
+              domChaff: domPayload,
             });
             usedPageContext = true;
-
-            // DOM chaff alongside network chaff (same as alarm path).
-            const domConfigs = POISONER.buildDOMChaffConfigs(STATE.chaosLevel);
-            if (domConfigs.length > 0) {
-              for (const dc of domConfigs) {
-                if (dc.injectPixel) dc.pixelSrc = POISONER.PIXEL_GIF;
-              }
-              try {
-                await chrome.tabs.sendMessage(tab.id, {
-                  type: "queueDOMChaff",
-                  configs: domConfigs,
-                });
-              } catch(e) {}
-            }
           }
         } catch(e) {}
         // No SW fallback — page-context only (item 4 invariant).

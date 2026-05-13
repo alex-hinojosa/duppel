@@ -344,9 +344,12 @@ const POISONER = {
     ];
   },
 
-  // Build DOM chaff configs for injection into page ad containers.
-  // Returns array of { selector, attributes: [{key, value}], injectPixel: bool }
-  buildDOMChaffConfigs(chaosLevel) {
+  // Build DOM chaff payload for bridge.js.
+  // Sends ALL candidate selectors + maxTargets. Bridge queries the DOM,
+  // finds actual matches, and samples up to maxTargets. This prevents
+  // random selector misses from burning the one-shot guard (rowan blocker 2).
+  // Returns { selectors, maxTargets, attributeSets, pixelChance, pixelSrc }
+  buildDOMChaffPayload(chaosLevel) {
     if (!this._activeClusters) this.selectPersona();
 
     let maxTargets;
@@ -354,19 +357,21 @@ const POISONER = {
     else if (chaosLevel === "chaos") maxTargets = 5;
     else maxTargets = 2; // balanced
 
-    const configs = [];
-    const shuffled = [...this.AD_CONTAINER_SELECTORS].sort(() => Math.random() - 0.5);
-    for (let i = 0; i < Math.min(maxTargets, shuffled.length); i++) {
+    // Pre-generate attribute sets (one per potential target, using persona data)
+    const attributeSets = [];
+    for (let i = 0; i < maxTargets; i++) {
       const allAttrs = this._adAttributes();
       const attrCount = 2 + Math.floor(Math.random() * 2); // 2-3
-      const shuffledAttrs = allAttrs.sort(() => Math.random() - 0.5).slice(0, attrCount);
-      configs.push({
-        selector: shuffled[i],
-        attributes: shuffledAttrs,
-        injectPixel: Math.random() < 0.3,
-      });
+      attributeSets.push(allAttrs.sort(() => Math.random() - 0.5).slice(0, attrCount));
     }
-    return configs;
+
+    return {
+      selectors: this.AD_CONTAINER_SELECTORS,
+      maxTargets: maxTargets,
+      attributeSets: attributeSets,
+      pixelChance: 0.3,
+      pixelSrc: this.PIXEL_GIF,
+    };
   },
 
   // === Fire a single beacon (SW-context fallback) ===

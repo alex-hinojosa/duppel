@@ -2,7 +2,7 @@
 
 Ordered by dependency chain, then value. Each item is a single PR — build, review, merge, move on.
 
-**Status:** Items 1-3, 5-11 COMPLETE/ACCEPTED. Item 3 dual-gate accepted (rowan engineering UID 292, lux methodology UID 291, commit 56682c9). Item 4 specs locked, building next.
+**Status:** Items 1-3, 5-11 COMPLETE/ACCEPTED. Item 3 dual-gate accepted (rowan engineering UID 292, lux methodology UID 291, commit 56682c9). Item 4 built, in review (commit 08f42e8).
 
 ---
 
@@ -85,9 +85,9 @@ Rowan's reorder rationale: session-level identity is the dependency that makes e
 
 **Files:** `anti-fingerprint.js` (MAIN world additions)
 
-### 4. Chaff Engine Redesign — Interaction-Coupled Chaff — SPECS LOCKED
+### 4. Chaff Engine Redesign — Interaction-Coupled Chaff — IN REVIEW
 
-**Status:** Specs locked. Rowan implementation gates defined (UID 272). Lux methodology endorsed HTML-attribute-level chaff metadata (UID 270). Building next.
+**Status:** Built, in review (commit 08f42e8). Rowan implementation gates defined (UID 272). Lux methodology endorsed HTML-attribute-level chaff metadata (UID 270). 4 e2e tests in `chaff-dom.spec.ts`, 8 unit tests in `poisoner-test.js`.
 
 **Why:** Current chaff beacons fire from the service worker with no preceding user gesture, no DOM context, no behavioral envelope. Server-side, a one-feature classifier separates them from real navigation. The 1% bypass zone only works when lures ride real telemetry.
 
@@ -109,7 +109,7 @@ Rowan's reorder rationale: session-level identity is the dependency that makes e
 
 **Goal:** Real referrer + cookie jar + temporal proximity to real user action. Not necessarily a durable DOM node.
 
-**Files:** `poisoner.js` (refactor), `anti-fingerprint.js` or new `chaff-injector.js` (page-context handler), `background.js` (message passing)
+**Files:** `poisoner.js` (DOM chaff config generation), `bridge.js` (DOM chaff application), `background.js` (dispatch)
 
 ---
 

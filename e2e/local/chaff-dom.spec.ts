@@ -3,42 +3,24 @@ import { test, expect } from '../fixtures/extension';
 /**
  * PhantomGrid v2 Item 4: Chaff Engine Redesign — DOM Credibility Layer
  *
- * Tests DOM chaff injection into ad/tracker containers:
- * 1. Attribute injection into matching containers
+ * Tests DOM chaff injection via the interaction-coupled path:
+ * 1. DOM chaff is interaction-coupled (applied on click, not on message arrival)
  * 2. No attribute collision (existing attributes preserved)
  * 3. Pixel injection (data: URI, 1x1, offscreen)
- * 4. One-shot guard (no double injection)
+ * 4. One-shot guard not consumed on selector miss
+ * 5. Production path: buildDOMChaffPayload() through alarm dispatch
  */
 
 test.describe('DOM chaff injection (v2 item 4)', () => {
-  test('attribute injection into matching ad containers', async ({ extensionPage: page }) => {
-    // Inject mock ad containers into the test page
+  test('interaction-coupled: DOM chaff applied after click, not on message arrival', async ({ extensionPage: page }) => {
+    // Inject a mock ad container
     await page.evaluate(() => {
       const div = document.createElement('div');
-      div.id = 'google_ads_iframe_test';
+      div.id = 'google_ads_iframe_coupled';
       div.style.cssText = 'width:300px;height:250px;';
       document.body.appendChild(div);
     });
 
-    // Send queueDOMChaff message directly via the extension messaging API
-    const result = await page.evaluate(() => {
-      return new Promise<number>((resolve) => {
-        // Listen for the domChaffApplied callback
-        const handler = (event: MessageEvent) => {
-          // Can't directly listen to chrome.runtime from page context.
-          // Instead, check the DOM after a delay.
-        };
-
-        // Dispatch the message via bridge.js (ISOLATED world listens)
-        // We need to use chrome.runtime.sendMessage from the extension context.
-        // Since we're in MAIN world, we'll simulate by injecting the configs
-        // directly into the DOM and verifying the shape.
-        // For e2e: use service worker to dispatch.
-        resolve(0);
-      });
-    });
-
-    // Use the service worker to send the queueDOMChaff message to the tab
     const sw = page.context().serviceWorkers()[0];
     expect(sw).toBeTruthy();
 
@@ -48,39 +30,39 @@ test.describe('DOM chaff injection (v2 item 4)', () => {
     });
     expect(tabId).toBeTruthy();
 
-    // Send DOM chaff configs targeting our mock container
+    // Send queueChaff with domChaff payload — should NOT apply immediately
     await sw.evaluate(async (tid: number) => {
       await chrome.tabs.sendMessage(tid, {
-        type: "queueDOMChaff",
-        configs: [
-          {
-            selector: '[id*="google_ads"]',
-            attributes: [
-              { key: "data-ad-slot", value: "1234567890" },
-              { key: "data-ad-format", value: "auto" },
-            ],
-            injectPixel: false,
-          },
-        ],
+        type: "queueChaff",
+        configs: [{ url: "https://localhost:1/__pg_noop__", body: null }],
+        domChaff: {
+          selectors: ['[id*="google_ads"]'],
+          maxTargets: 1,
+          attributeSets: [[{ key: "data-ad-slot", value: "coupled-test" }]],
+          pixelChance: 0,
+          pixelSrc: null,
+        },
       });
     }, tabId);
 
-    // Wait for DOM chaff to be applied
-    await page.waitForTimeout(300);
+    // Wait a moment — DOM chaff should NOT be applied yet
+    await page.waitForTimeout(500);
 
-    // Verify attributes were injected
-    const attrs = await page.evaluate(() => {
-      const el = document.getElementById('google_ads_iframe_test');
-      if (!el) return null;
-      return {
-        adSlot: el.getAttribute('data-ad-slot'),
-        adFormat: el.getAttribute('data-ad-format'),
-      };
+    const beforeClick = await page.evaluate(() => {
+      const el = document.getElementById('google_ads_iframe_coupled');
+      return el ? el.getAttribute('data-ad-slot') : null;
     });
+    expect(beforeClick).toBeNull(); // NOT applied before interaction
 
-    expect(attrs).toBeTruthy();
-    expect(attrs!.adSlot).toBe('1234567890');
-    expect(attrs!.adFormat).toBe('auto');
+    // Trigger a click — this fires _fireChaffBatch() which applies DOM chaff
+    await page.click('body');
+    await page.waitForTimeout(500);
+
+    const afterClick = await page.evaluate(() => {
+      const el = document.getElementById('google_ads_iframe_coupled');
+      return el ? el.getAttribute('data-ad-slot') : null;
+    });
+    expect(afterClick).toBe('coupled-test'); // Applied after interaction
   });
 
   test('no attribute collision: existing attributes preserved', async ({ extensionPage: page }) => {
@@ -99,24 +81,27 @@ test.describe('DOM chaff injection (v2 item 4)', () => {
       return tab?.id || null;
     });
 
-    // Send DOM chaff that would overwrite data-ad-client
+    // Send chaff with domChaff that would overwrite data-ad-client
     await sw.evaluate(async (tid: number) => {
       await chrome.tabs.sendMessage(tid, {
-        type: "queueDOMChaff",
-        configs: [
-          {
-            selector: 'ins.adsbygoogle',
-            attributes: [
-              { key: "data-ad-client", value: "ca-pub-SHOULD-NOT-APPEAR" },
-              { key: "data-ad-slot", value: "9876543210" },
-            ],
-            injectPixel: false,
-          },
-        ],
+        type: "queueChaff",
+        configs: [{ url: "https://localhost:1/__pg_noop__", body: null }],
+        domChaff: {
+          selectors: ['ins.adsbygoogle'],
+          maxTargets: 1,
+          attributeSets: [[
+            { key: "data-ad-client", value: "ca-pub-SHOULD-NOT-APPEAR" },
+            { key: "data-ad-slot", value: "9876543210" },
+          ]],
+          pixelChance: 0,
+          pixelSrc: null,
+        },
       });
     }, tabId);
 
-    await page.waitForTimeout(300);
+    // Trigger interaction to fire chaff
+    await page.click('body');
+    await page.waitForTimeout(500);
 
     const attrs = await page.evaluate(() => {
       const el = document.querySelector('ins.adsbygoogle');
@@ -150,24 +135,23 @@ test.describe('DOM chaff injection (v2 item 4)', () => {
       return tab?.id || null;
     });
 
-    // Send DOM chaff with pixel injection enabled
+    // Send chaff with pixel injection (pixelChance=1 to guarantee injection)
     await sw.evaluate(async (tid: number) => {
       await chrome.tabs.sendMessage(tid, {
-        type: "queueDOMChaff",
-        configs: [
-          {
-            selector: '[class*="ad-container"]',
-            attributes: [
-              { key: "data-ad-slot", value: "5555555555" },
-            ],
-            injectPixel: true,
-            pixelSrc: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
-          },
-        ],
+        type: "queueChaff",
+        configs: [{ url: "https://localhost:1/__pg_noop__", body: null }],
+        domChaff: {
+          selectors: ['[class*="ad-container"]'],
+          maxTargets: 1,
+          attributeSets: [[{ key: "data-ad-slot", value: "5555555555" }]],
+          pixelChance: 1.0,
+          pixelSrc: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+        },
       });
     }, tabId);
 
-    await page.waitForTimeout(300);
+    await page.click('body');
+    await page.waitForTimeout(500);
 
     // Verify pixel was injected
     const pixel = await page.evaluate(() => {
@@ -192,18 +176,74 @@ test.describe('DOM chaff injection (v2 item 4)', () => {
     expect(pixel!.hasOffscreenStyle).toBe(true);
   });
 
-  test('one-shot guard: second dispatch returns 0 applied', async ({ extensionPage: page }) => {
-    // Inject mock ad containers
-    await page.evaluate(() => {
-      const div1 = document.createElement('div');
-      div1.id = 'gpt-ad-oneshot-1';
-      div1.style.cssText = 'width:300px;height:250px;';
-      document.body.appendChild(div1);
+  test('selector miss: one-shot guard not consumed when no selectors match', async ({ extensionPage: page }) => {
+    // Page has NO ad containers — selector miss should not burn one-shot
+    const sw = page.context().serviceWorkers()[0];
+    const tabId = await sw.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      return tab?.id || null;
+    });
 
-      const div2 = document.createElement('div');
-      div2.id = 'gpt-ad-oneshot-2';
-      div2.style.cssText = 'width:728px;height:90px;';
-      document.body.appendChild(div2);
+    // Send chaff with selectors that won't match anything
+    await sw.evaluate(async (tid: number) => {
+      await chrome.tabs.sendMessage(tid, {
+        type: "queueChaff",
+        configs: [{ url: "https://localhost:1/__pg_noop__", body: null }],
+        domChaff: {
+          selectors: ['[id*="nonexistent_ad_container"]', '[class*="no-such-ad"]'],
+          maxTargets: 1,
+          attributeSets: [[{ key: "data-ad-slot", value: "miss-test" }]],
+          pixelChance: 0,
+          pixelSrc: null,
+        },
+      });
+    }, tabId);
+
+    // Trigger interaction — DOM chaff should find no matches
+    await page.click('body');
+    await page.waitForTimeout(300);
+
+    // Now inject an ad container and send a second batch
+    await page.evaluate(() => {
+      const div = document.createElement('div');
+      div.id = 'gpt-ad-after-miss';
+      div.style.cssText = 'width:300px;height:250px;';
+      document.body.appendChild(div);
+    });
+
+    // Second dispatch — one-shot should NOT be consumed from the miss
+    await sw.evaluate(async (tid: number) => {
+      await chrome.tabs.sendMessage(tid, {
+        type: "queueChaff",
+        configs: [{ url: "https://localhost:1/__pg_noop2__", body: null }],
+        domChaff: {
+          selectors: ['[id*="gpt-ad"]'],
+          maxTargets: 1,
+          attributeSets: [[{ key: "data-ad-slot", value: "after-miss-success" }]],
+          pixelChance: 0,
+          pixelSrc: null,
+        },
+      });
+    }, tabId);
+
+    await page.click('body');
+    await page.waitForTimeout(500);
+
+    // Second dispatch should succeed since one-shot was not consumed
+    const result = await page.evaluate(() => {
+      const el = document.getElementById('gpt-ad-after-miss');
+      return el ? el.getAttribute('data-ad-slot') : null;
+    });
+    expect(result).toBe('after-miss-success');
+  });
+
+  test('production path: buildDOMChaffPayload with one matching selector', async ({ extensionPage: page }) => {
+    // Inject a single ad container — only one of the 12 selectors will match
+    await page.evaluate(() => {
+      const div = document.createElement('div');
+      div.id = 'dfp-ad-production-test';
+      div.style.cssText = 'width:300px;height:250px;';
+      document.body.appendChild(div);
     });
 
     const sw = page.context().serviceWorkers()[0];
@@ -212,59 +252,35 @@ test.describe('DOM chaff injection (v2 item 4)', () => {
       return tab?.id || null;
     });
 
-    // First dispatch — should apply
-    const firstResult = await sw.evaluate(async (tid: number) => {
-      return new Promise<number>((resolve) => {
-        const handler = (msg: any) => {
-          if (msg.type === "domChaffApplied") {
-            chrome.runtime.onMessage.removeListener(handler);
-            resolve(msg.count);
-          }
-        };
-        chrome.runtime.onMessage.addListener(handler);
-        chrome.tabs.sendMessage(tid, {
-          type: "queueDOMChaff",
-          configs: [
-            {
-              selector: '[id*="gpt-ad"]',
-              attributes: [{ key: "data-ad-slot", value: "first-inject" }],
-              injectPixel: false,
-            },
-          ],
-        });
-        // Timeout fallback
-        setTimeout(() => resolve(-1), 3000);
+    // Use the production path: background builds payload, sends via queueChaff
+    await sw.evaluate(async (tid: number) => {
+      // @ts-ignore - POISONER is available in SW context
+      const domPayload = POISONER.buildDOMChaffPayload("balanced");
+      await chrome.tabs.sendMessage(tid, {
+        type: "queueChaff",
+        configs: [{ url: "https://localhost:1/__pg_noop__", body: null }],
+        domChaff: domPayload,
       });
     }, tabId);
 
-    // First dispatch should have applied to at least 1 container
-    expect(firstResult).toBeGreaterThan(0);
+    // Trigger interaction
+    await page.click('body');
+    await page.waitForTimeout(500);
 
-    // Second dispatch — should be blocked by one-shot guard
-    const secondResult = await sw.evaluate(async (tid: number) => {
-      return new Promise<number>((resolve) => {
-        const handler = (msg: any) => {
-          if (msg.type === "domChaffApplied") {
-            chrome.runtime.onMessage.removeListener(handler);
-            resolve(msg.count);
-          }
-        };
-        chrome.runtime.onMessage.addListener(handler);
-        chrome.tabs.sendMessage(tid, {
-          type: "queueDOMChaff",
-          configs: [
-            {
-              selector: '[id*="gpt-ad"]',
-              attributes: [{ key: "data-ad-format", value: "should-not-appear" }],
-              injectPixel: false,
-            },
-          ],
-        });
-        setTimeout(() => resolve(-1), 3000);
-      });
-    }, tabId);
+    // The container should have at least one data-ad-* or data-analytics-* attribute
+    const result = await page.evaluate(() => {
+      const el = document.getElementById('dfp-ad-production-test');
+      if (!el) return { found: false, attrs: [] };
+      const dataAttrs: string[] = [];
+      for (let i = 0; i < el.attributes.length; i++) {
+        const attr = el.attributes[i];
+        if (attr.name.startsWith('data-')) dataAttrs.push(attr.name);
+      }
+      return { found: true, attrs: dataAttrs };
+    });
 
-    // One-shot guard: second dispatch returns 0
-    expect(secondResult).toBe(0);
+    expect(result.found).toBe(true);
+    // At least one data-* attribute was injected (2-3 per attribute set)
+    expect(result.attrs.length).toBeGreaterThanOrEqual(2);
   });
 });
