@@ -91,31 +91,25 @@ This is **engine-level** — it happens before any JavaScript executes and cover
 
 **LibreWolf:** Strips tracking parameters from URLs both natively (Firefox's built-in `privacy.query_stripping.enabled`) and through uBlock Origin filters. Known parameters stripped: `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `fbclid`, `gclid`, `mc_eid`, `msclkid`, `yclid`, `twclid`, plus many more.
 
-**PhantomGrid:** Does not strip URL tracking parameters.
+**PhantomGrid:** Strips 17 tracking parameters (`utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `utm_id`, `fbclid`, `gclid`, `dclid`, `msclkid`, `yclid`, `twclid`, `mc_eid`, `_ga`, `_gl`, `wbraid`, `gbraid`) via a `declarativeNetRequest` redirect rule using `queryTransform.removeParams`. Stripping happens at the network layer before the request reaches the server. Non-tracking parameters and URL fragments are preserved.
 
-**Gap identified:** This is fully feasible in a Chrome extension.
-
-**Feasibility:** **Yes — strong roadmap candidate.** Chrome's `declarativeNetRequest` API supports `redirect` actions that can strip query parameters. Alternatively, a content script can clean `document.location` and `History.pushState` to remove parameters after navigation. The DNR approach is cleaner (strips before the request reaches the server). A hardcoded list of known tracking parameters (there are ~40 well-documented ones) handles the vast majority.
+**Assessment:** Gap closed (v2 item 8). PhantomGrid's list is smaller than LibreWolf's (17 vs ~40+), but covers the high-traffic parameters. List is extensible.
 
 ### HTTP Referrer Trimming
 
 **LibreWolf:** Sets `network.http.referer.XOriginTrimmingPolicy = 2` — cross-origin referrers include only the scheme+host+port (no path). Same-origin referrers are untouched. This prevents the destination site from knowing which specific page you came from on a different site.
 
-**PhantomGrid:** Does not modify referrer headers.
+**PhantomGrid:** Cross-origin `Referer` headers trimmed to origin-only via `declarativeNetRequest`. Third-party sub-resource requests (different eTLD+1) have `Referer` removed entirely. Same-origin referrers preserved. `document.referrer` spoofed in MAIN world to match network-layer behavior.
 
-**Gap identified:** Feasible and valuable.
-
-**Feasibility:** **Yes — roadmap candidate.** Chrome's `declarativeNetRequest` can modify the `Referer` header on cross-origin requests to trim the path. Also `document.referrer` should be patched in the MAIN world script to match.
+**Assessment:** Gap closed (v2 item 9). Comparable to LibreWolf's trimming policy.
 
 ### Global Privacy Control (GPC)
 
 **LibreWolf:** Sets the `Sec-GPC: 1` HTTP header and `navigator.globalPrivacyControl = true`. GPC is a proposed standard (backed by California's CCPA) that signals opt-out from data sale/sharing. Some jurisdictions legally require honoring it.
 
-**PhantomGrid:** Does not send GPC signals.
+**PhantomGrid:** Sets `navigator.globalPrivacyControl = true` via hardened `spoof()` getter (survives property assignment, native-shaped descriptors, passes `Function.prototype.toString` probes). `Sec-GPC: 1` HTTP header added to all outbound requests via `declarativeNetRequest`.
 
-**Gap identified:** Trivial to implement.
-
-**Feasibility:** **Yes — low-effort roadmap candidate.** DNR adds the header; MAIN world script sets `navigator.globalPrivacyControl`. Two lines of code for legal-grade opt-out signaling.
+**Assessment:** Gap closed (v2 item 7). Parity with LibreWolf.
 
 ### Link Prefetching / Speculative Connections
 
@@ -129,11 +123,9 @@ This is **engine-level** — it happens before any JavaScript executes and cover
 
 **LibreWolf:** Forces DNS through the proxy when one is configured. Limits ICE candidates to a single interface (`media.peerconnection.ice.default_address_only = true`), preventing WebRTC from leaking local network IPs.
 
-**PhantomGrid:** Does not address WebRTC or DNS leaks.
+**PhantomGrid:** Sets `chrome.privacy.network.webRTCIPHandlingPolicy` to `default_public_interface_only`, preventing ICE candidate enumeration of all network interfaces. Chosen over `disable_non_proxied_udp` (relay-only) because relay-only is itself a fingerprinting signal and breaks WebRTC apps without TURN. DNS leak prevention is not feasible from an extension.
 
-**Gap identified:** WebRTC IP leak is a known privacy issue.
-
-**Feasibility:** **Partial.** Chrome has `chrome.privacy.network.webRTCIPHandlingPolicy` that extensions can set to `disable_non_proxied_udp` or `default_public_interface_only`. **This is a roadmap candidate.** DNS control is not feasible from an extension.
+**Assessment:** WebRTC gap closed (v2 item 10). DNS gap remains (not feasible at extension layer).
 
 ### Telemetry Removal
 
@@ -192,24 +184,25 @@ This is **engine-level** — it happens before any JavaScript executes and cover
 
 Based on the comparison, here are additions to PhantomGrid's roadmap, prioritized by feasibility and privacy impact:
 
-### High Priority (feasible, high impact)
+### Closed in v2
+
+All six "low-hanging fruit" gaps from the original comparison have been implemented:
+
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| **Query string stripping** | CLOSED (v2 item 8) | DNR redirect rule strips 17 tracking params |
+| **GPC header + navigator flag** | CLOSED (v2 item 7) | DNR `Sec-GPC: 1` header + hardened `navigator.globalPrivacyControl` getter |
+| **Cross-origin referrer trimming** | CLOSED (v2 item 9) | DNR trims cross-origin `Referer` to origin-only; third-party removed entirely |
+| **WebRTC IP leak prevention** | CLOSED (v2 item 10) | `webRTCIPHandlingPolicy = "default_public_interface_only"` |
+| **`performance.now()` rounding** | CLOSED (v2 item 3) | 0.1ms quantization + Gaussian jitter, monotonic clamp |
+| **`enumerateDevices()` spoofing** | CLOSED (v2 item 11) | 3 spoofed devices, native prototype shapes, stable per session |
+| **WebGL `readPixels` noise** | CLOSED (v2 item 2) | Same deterministic noise as canvas 2D |
+| **OffscreenCanvas coverage** | CLOSED (v2 item 2) | `convertToBlob()` + `getImageData()` noised with same seed |
+
+### Remaining Gaps (feasible, moderate impact)
 
 | Feature | Effort | Implementation Path |
 |---------|--------|-------------------|
-| **Query string stripping** | Medium | DNR redirect rules for ~40 known tracking params (`utm_*`, `fbclid`, `gclid`, etc.) |
-| **GPC header + navigator flag** | Low | DNR adds `Sec-GPC: 1`; MAIN world sets `navigator.globalPrivacyControl = true` |
-| **Cross-origin referrer trimming** | Medium | DNR modifies `Referer` header to origin-only on cross-origin; MAIN world patches `document.referrer` |
-| **WebRTC IP leak prevention** | Low | `chrome.privacy.network.webRTCIPHandlingPolicy = "default_public_interface_only"` |
-| **`performance.now()` rounding** | Low | Wrap `Performance.prototype.now` to quantize to 100ms buckets |
-| **`enumerateDevices()` spoofing** | Low | Return single "default" audio/video device or empty array |
-
-### Medium Priority (feasible, moderate impact)
-
-| Feature | Effort | Implementation Path |
-|---------|--------|-------------------|
-| **Uniform-canvas detection hardening** | Low | Test + verify noise function on solid-color canvases |
-| **WebGL `readPixels` noise** | Medium | Same pattern as canvas noise, applied to `readPixels` output |
-| **OffscreenCanvas coverage** | Medium | Intercept `OffscreenCanvas` constructor, apply same noise pipeline |
 | **`document.fonts` enumeration** | Medium | Intercept `FontFaceSet.prototype.check()` to return fixed results |
 
 ### Low Priority (limited feasibility or niche impact)
@@ -230,10 +223,10 @@ LibreWolf and PhantomGrid are complementary, not competing. LibreWolf operates a
 
 PhantomGrid operates within Chrome's extension sandbox, which limits depth but maximizes reach. It also brings capabilities that LibreWolf's defensive philosophy doesn't include: per-tab identity rotation, Chaff Beacons (tracker chaff), and ultrasonic cross-device tracking defense.
 
-The most actionable takeaway from this comparison is the set of **low-hanging fruit** that LibreWolf implements via preferences/headers and that PhantomGrid can implement via DNR and MAIN world hooks: query string stripping, GPC, referrer trimming, WebRTC leak prevention, `performance.now()` rounding, and `enumerateDevices()` spoofing. These six additions would close the most visible gaps in the comparison without requiring engine-level access.
+The original comparison identified six "low-hanging fruit" gaps: query string stripping, GPC, referrer trimming, WebRTC leak prevention, `performance.now()` rounding, and `enumerateDevices()` spoofing. **All six have been implemented in v2** (items 3, 7, 8, 9, 10, 11), along with additional surfaces (canvas noise hardening, WebGL profile-bucketed caps, OffscreenCanvas coverage, behavioral biometric precision-reduction, DOM chaff).
 
 The deeper gaps — dFPI, font enumeration, window rounding, compile-time telemetry removal — are architecturally impossible in a Chrome extension. They represent the inherent trade-off of the extension model: we trade depth for reach.
 
 ---
 
-*Analysis by snapdragon, 2026-05-08. LibreWolf source analyzed from NAS at /Volumes/Mesh/Lab/Librewolf/source/ (Codeberg mirror). PhantomGrid source at C:\snapdragon\phantomgrid\.*
+*Analysis by snapdragon, 2026-05-08. Updated 2026-05-13 to reflect v2 gap closures. LibreWolf source analyzed from NAS at /Volumes/Mesh/Lab/Librewolf/source/ (Codeberg mirror).*
