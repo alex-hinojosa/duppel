@@ -26,7 +26,7 @@ How to evaluate PhantomGrid against commercial fingerprinting services. This pro
    - Platform, hardwareConcurrency, deviceMemory are from the spoofed pools
    - Screen resolution matches the spoofed profile
 5. Click "Rotate Identity" in PhantomGrid, reload each page
-6. Verify all fingerprint values changed
+6. Verify the composite fingerprint changed (at least one high-entropy surface like canvas hash, WebGL renderer, or UA string should differ; not every individual field is required to change since pool collisions are possible)
 
 **Expected outcomes:**
 - Canvas hash: different from control, changes on rotation
