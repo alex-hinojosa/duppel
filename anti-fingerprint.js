@@ -56,11 +56,15 @@
     ORIG.glGetParameter = WebGLRenderingContext.prototype.getParameter;
     ORIG.glReadPixels = WebGLRenderingContext.prototype.readPixels;
     ORIG.glGetShaderPrecisionFormat = WebGLRenderingContext.prototype.getShaderPrecisionFormat;
+    ORIG.glGetExtension = WebGLRenderingContext.prototype.getExtension;
+    ORIG.glGetSupportedExtensions = WebGLRenderingContext.prototype.getSupportedExtensions;
   }
   if (typeof WebGL2RenderingContext !== "undefined") {
     ORIG.gl2GetParameter = WebGL2RenderingContext.prototype.getParameter;
     ORIG.gl2ReadPixels = WebGL2RenderingContext.prototype.readPixels;
     ORIG.gl2GetShaderPrecisionFormat = WebGL2RenderingContext.prototype.getShaderPrecisionFormat;
+    ORIG.gl2GetExtension = WebGL2RenderingContext.prototype.getExtension;
+    ORIG.gl2GetSupportedExtensions = WebGL2RenderingContext.prototype.getSupportedExtensions;
   }
   if (typeof OffscreenCanvas !== "undefined") {
     ORIG.offscreenConvertToBlob = OffscreenCanvas.prototype.convertToBlob;
@@ -920,31 +924,77 @@
     });
   }, "measureText");
 
-  // === WebGL fingerprint spoofing ===
+  // === WebGL fingerprint spoofing (profile-bucketed) ===
   // WebGL capability parameters leak hardware identity through unique
-  // combinations of limits. Normalize to common values matching a
-  // mid-range GPU (Intel UHD 630 / RTX 3060 class).
-  const GL_PARAM_SPOOFS = {
-    0x0D33: 16384,    // MAX_TEXTURE_SIZE
-    0x851C: 16384,    // MAX_CUBE_MAP_TEXTURE_SIZE
-    0x84E8: 16384,    // MAX_RENDERBUFFER_SIZE
-    0x8869: 16,       // MAX_VERTEX_ATTRIBS
-    0x8872: 4096,     // MAX_VERTEX_UNIFORM_VECTORS
-    0x8B4C: 16,       // MAX_VERTEX_TEXTURE_IMAGE_UNITS
-    0x8871: 30,       // MAX_VARYING_VECTORS
-    0x8824: 1024,     // MAX_FRAGMENT_UNIFORM_VECTORS
-    0x8B4D: 16,       // MAX_TEXTURE_IMAGE_UNITS
-    0x8B4A: 32,       // MAX_COMBINED_TEXTURE_IMAGE_UNITS
+  // combinations of limits. Caps are bucketed by renderer profile to
+  // avoid contradiction fingerprints (e.g., Apple M1 caps on NVIDIA renderer).
+  //
+  // Cap buckets derived from real-world WebGL reports:
+  // - apple: OpenGL 4.1 limits (M1/M2, Iris Plus on Mac)
+  // - intel_low: Intel HD 620 class
+  // - intel_mid: Intel UHD 630 / Iris Xe class
+  // - nvidia_mid: GTX 1060 / RTX 3060 / AMD RX class
+  // - nvidia_high: RTX 4070+ class
+  const GL_CAP_BUCKETS = {
+    apple: {
+      0x0D33: 16384, 0x851C: 16384, 0x84E8: 16384,
+      0x8869: 16, 0x8872: 4096, 0x8B4C: 16, 0x8871: 30,
+      0x8824: 1024, 0x8B4D: 16, 0x8B4A: 32,
+      viewportDims: [16384, 16384], lineWidthRange: [1, 1],
+      pointSizeRange: [1, 255], maxAnisotropy: 16,
+    },
+    intel_low: {
+      0x0D33: 16384, 0x851C: 16384, 0x84E8: 16384,
+      0x8869: 16, 0x8872: 4096, 0x8B4C: 16, 0x8871: 30,
+      0x8824: 1024, 0x8B4D: 16, 0x8B4A: 32,
+      viewportDims: [16384, 16384], lineWidthRange: [1, 7.375],
+      pointSizeRange: [1, 255], maxAnisotropy: 16,
+    },
+    intel_mid: {
+      0x0D33: 16384, 0x851C: 16384, 0x84E8: 16384,
+      0x8869: 16, 0x8872: 4096, 0x8B4C: 16, 0x8871: 30,
+      0x8824: 1024, 0x8B4D: 16, 0x8B4A: 32,
+      viewportDims: [32767, 32767], lineWidthRange: [1, 7.375],
+      pointSizeRange: [1, 255], maxAnisotropy: 16,
+    },
+    nvidia_mid: {
+      0x0D33: 16384, 0x851C: 16384, 0x84E8: 16384,
+      0x8869: 16, 0x8872: 4096, 0x8B4C: 16, 0x8871: 32,
+      0x8824: 1024, 0x8B4D: 16, 0x8B4A: 32,
+      viewportDims: [32767, 32767], lineWidthRange: [1, 1],
+      pointSizeRange: [1, 1024], maxAnisotropy: 16,
+    },
+    nvidia_high: {
+      0x0D33: 32768, 0x851C: 32768, 0x84E8: 32768,
+      0x8869: 16, 0x8872: 4096, 0x8B4C: 16, 0x8871: 32,
+      0x8824: 1024, 0x8B4D: 16, 0x8B4A: 32,
+      viewportDims: [32767, 32767], lineWidthRange: [1, 1],
+      pointSizeRange: [1, 1024], maxAnisotropy: 16,
+    },
   };
+
+  // Map renderer strings to cap buckets
+  function getCapBucket(renderer) {
+    if (/Apple\s+M[12]/.test(renderer)) return GL_CAP_BUCKETS.apple;
+    if (/Iris.*Plus/.test(renderer)) return GL_CAP_BUCKETS.apple; // Mac Intel Iris Plus uses same OGL 4.1 limits
+    if (/HD\s+Graphics\s+6[12]0/.test(renderer)) return GL_CAP_BUCKETS.intel_low;
+    if (/UHD\s+Graphics|Iris.*Xe/.test(renderer)) return GL_CAP_BUCKETS.intel_mid;
+    if (/RTX\s+4/.test(renderer)) return GL_CAP_BUCKETS.nvidia_high;
+    // GTX, RTX 3xxx, AMD RX → nvidia_mid (shared mid-range discrete GPU bucket)
+    return GL_CAP_BUCKETS.nvidia_mid;
+  }
+
+  const activeGlCaps = getCapBucket(profile.gpu.renderer);
+
   function spoofGlGetParameter(origFn) {
     return disguise(function(param) {
       if (param === 0x9245) return profile.gpu.vendor;
       if (param === 0x9246) return profile.gpu.renderer;
-      if (GL_PARAM_SPOOFS[param] !== undefined) return GL_PARAM_SPOOFS[param];
-      if (param === 0x0D3D) return new Int32Array([32767, 32767]); // MAX_VIEWPORT_DIMS
-      if (param === 0x846E) return new Float32Array([1, 1]);        // ALIASED_LINE_WIDTH_RANGE
-      if (param === 0x8460) return new Float32Array([1, 1024]);     // ALIASED_POINT_SIZE_RANGE
-      if (param === 0x84FE) return 16;                              // MAX_ANISOTROPY (EXT)
+      if (activeGlCaps[param] !== undefined) return activeGlCaps[param];
+      if (param === 0x0D3D) return new Int32Array(activeGlCaps.viewportDims);        // MAX_VIEWPORT_DIMS
+      if (param === 0x846E) return new Float32Array(activeGlCaps.lineWidthRange);    // ALIASED_LINE_WIDTH_RANGE
+      if (param === 0x8460) return new Float32Array(activeGlCaps.pointSizeRange);    // ALIASED_POINT_SIZE_RANGE
+      if (param === 0x84FE) return activeGlCaps.maxAnisotropy;                       // MAX_ANISOTROPY (EXT)
       return origFn.call(this, param);
     }, "getParameter");
   }
@@ -978,13 +1028,67 @@
     WebGL2RenderingContext.prototype.getSupportedExtensions = spoofedGetSupportedExtensions;
   }
 
+  // === WebGL getExtension() coherence wrapper ===
+  // getSupportedExtensions() advertises a normalized list; getExtension() must
+  // return coherent objects for spoofed extensions, pass through for others,
+  // and return null for extensions not in the advertised set.
+  const COMMON_EXT_SET = new Set(COMMON_WEBGL_EXTENSIONS);
+
+  function spoofGetExtension(origFn) {
+    return disguise(function(name) {
+      // Extensions not in our advertised set → null (coherent with getSupportedExtensions)
+      if (!COMMON_EXT_SET.has(name)) return null;
+
+      // WEBGL_debug_renderer_info: return constants matching spoofed vendor/renderer
+      if (name === "WEBGL_debug_renderer_info") {
+        // Try to get the real extension object to preserve native prototype
+        const real = origFn.call(this, name);
+        if (real) return real; // Real object has the correct constants (0x9245, 0x9246)
+        // Fallback: return a stub with the standard constants
+        return {
+          UNMASKED_VENDOR_WEBGL: 0x9245,
+          UNMASKED_RENDERER_WEBGL: 0x9246,
+        };
+      }
+
+      // EXT_texture_filter_anisotropic: return object with MAX constant = 16
+      if (name === "EXT_texture_filter_anisotropic") {
+        const real = origFn.call(this, name);
+        if (real) return real; // Real object has TEXTURE_MAX_ANISOTROPY_EXT + MAX constant
+        // Fallback stub matching the spec constants
+        return {
+          TEXTURE_MAX_ANISOTROPY_EXT: 0x84FE,
+          MAX_TEXTURE_MAX_ANISOTROPY_EXT: 0x84FF,
+        };
+      }
+
+      // All other advertised extensions: pass through to native
+      return origFn.call(this, name);
+    }, "getExtension");
+  }
+  if (ORIG.glGetExtension) {
+    WebGLRenderingContext.prototype.getExtension = spoofGetExtension(ORIG.glGetExtension);
+  }
+  if (ORIG.gl2GetExtension) {
+    WebGL2RenderingContext.prototype.getExtension = spoofGetExtension(ORIG.gl2GetExtension);
+  }
+
   // === WebGL getShaderPrecisionFormat normalization ===
   // Shader precision varies by GPU: mantissa bits, range min/max differ
   // across vendors. Normalize to highp everywhere (standard float: 23-bit
   // mantissa, [-127, 127] range) — common on desktop GPUs.
+  // Option A (atlas): call real method to get native WebGLShaderPrecisionFormat
+  // object, then mutate numeric fields. Preserves prototype/constructor/instanceof.
   function spoofGetShaderPrecisionFormat(origFn) {
     return disguise(function(shaderType, precisionType) {
-      return { rangeMin: 127, rangeMax: 127, precision: 23 };
+      const real = origFn.call(this, shaderType, precisionType);
+      if (!real) return real;
+      // Mutate the native object's fields — preserves [[Class]], prototype chain,
+      // instanceof WebGLShaderPrecisionFormat, descriptor shape, and toString tag.
+      ORIG.defineProperty.call(Object, real, "rangeMin", { value: 127, writable: false, enumerable: true, configurable: false });
+      ORIG.defineProperty.call(Object, real, "rangeMax", { value: 127, writable: false, enumerable: true, configurable: false });
+      ORIG.defineProperty.call(Object, real, "precision", { value: 23, writable: false, enumerable: true, configurable: false });
+      return real;
     }, "getShaderPrecisionFormat");
   }
   if (ORIG.glGetShaderPrecisionFormat) {
