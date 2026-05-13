@@ -320,6 +320,55 @@ const POISONER = {
     return configs;
   },
 
+  // === DOM Chaff — ad container attribute injection (v2 item 4) ===
+  // Selectors for plausible ad/tracker container elements.
+  // Bounded to real ad-infrastructure patterns (rowan gate: no generic DOM noise).
+  AD_CONTAINER_SELECTORS: [
+    '[id*="google_ads"]', '[id*="gpt-ad"]', '[class*="adsbygoogle"]',
+    '[id*="ad-slot"]', '[id*="ad_slot"]', '[class*="ad-container"]',
+    '[class*="ad-wrapper"]', '[data-ad-slot]', '[data-ad-client]',
+    'ins.adsbygoogle', '[id*="dfp-ad"]', '[class*="sponsored"]',
+  ],
+
+  // 1x1 transparent GIF as data: URI. No network request, no DNR conflict.
+  PIXEL_GIF: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+
+  // Attribute families that real ad infrastructure sets.
+  _adAttributes() {
+    return [
+      { key: "data-ad-slot",      value: String(Math.floor(Math.random() * 9999999999)) },
+      { key: "data-ad-client",    value: "ca-pub-" + String(Math.floor(Math.random() * 9999999999999999)) },
+      { key: "data-ad-format",    value: this._pickFrom(["auto", "fluid", "rectangle", "horizontal"]) },
+      { key: "data-analytics-id", value: this._personaTids ? this._personaTids.ga4 : "G-" + this._randomHex(10).toUpperCase() },
+      { key: "data-fb-pixel",     value: this._personaMetaId || String(Math.floor(Math.random() * 9999999999999)) },
+    ];
+  },
+
+  // Build DOM chaff configs for injection into page ad containers.
+  // Returns array of { selector, attributes: [{key, value}], injectPixel: bool }
+  buildDOMChaffConfigs(chaosLevel) {
+    if (!this._activeClusters) this.selectPersona();
+
+    let maxTargets;
+    if (chaosLevel === "stealth") maxTargets = 1;
+    else if (chaosLevel === "chaos") maxTargets = 5;
+    else maxTargets = 2; // balanced
+
+    const configs = [];
+    const shuffled = [...this.AD_CONTAINER_SELECTORS].sort(() => Math.random() - 0.5);
+    for (let i = 0; i < Math.min(maxTargets, shuffled.length); i++) {
+      const allAttrs = this._adAttributes();
+      const attrCount = 2 + Math.floor(Math.random() * 2); // 2-3
+      const shuffledAttrs = allAttrs.sort(() => Math.random() - 0.5).slice(0, attrCount);
+      configs.push({
+        selector: shuffled[i],
+        attributes: shuffledAttrs,
+        injectPixel: Math.random() < 0.3,
+      });
+    }
+    return configs;
+  },
+
   // === Fire a single beacon (SW-context fallback) ===
   async fireFakeBeacon() {
     try {

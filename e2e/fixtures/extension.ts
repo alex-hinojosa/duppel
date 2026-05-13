@@ -93,13 +93,50 @@ export const test = base.extend<{
     await page.goto(`http://127.0.0.1:${port}/`);
     await page.waitForLoadState('domcontentloaded');
 
-    // Wait for desync-reload cycle: anti-fingerprint.js generates a random
-    // seed on first load; bridge.js detects the mismatch and background
-    // re-injects the correct session seed + reloads the tab. After this
-    // reload, JS and HTTP UA are guaranteed to match.
-    await page.waitForTimeout(800);
+    // Item 2: background.js pre-injects the session seed via
+    // chrome.tabs.onUpdated + injectImmediately. When pre-injection
+    // loses the race, seedObserved silently corrects sessionStorage.
+    // Poll for convergence before reloading to apply the correct profile.
+    const sw = context.serviceWorkers()[0];
+    let sessionSeed: number | null = null;
+    if (sw) {
+      // Poll for session seed — service worker may still be initializing
+      for (let i = 0; i < 30; i++) {
+        sessionSeed = await sw.evaluate(async () => {
+          const data = await chrome.storage.session.get(['sessionSeed']);
+          return data.sessionSeed || null;
+        });
+        if (sessionSeed) break;
+        await new Promise(r => setTimeout(r, 150));
+      }
+      // Poll for page seed convergence
+      if (sessionSeed) {
+        for (let i = 0; i < 30; i++) {
+          const currentSeed = await page.evaluate(() => {
+            const raw = sessionStorage.getItem('__pg_seed__');
+            return raw ? parseInt(raw, 10) : null;
+          });
+          if (currentSeed === sessionSeed) break;
+          await new Promise(r => setTimeout(r, 100));
+        }
+        // Re-read the latest sessionSeed in case createIdentity() ran
+        // again after our initial read (DNR rule uses the latest seed).
+        const latestSeed = await sw.evaluate(async () => {
+          const data = await chrome.storage.session.get(['sessionSeed']);
+          return data.sessionSeed || null;
+        });
+        if (latestSeed) sessionSeed = latestSeed;
+        // Force-write session seed to guarantee convergence before reload.
+        await page.evaluate((s) => {
+          sessionStorage.setItem('__pg_seed__', String(s));
+        }, sessionSeed);
+      }
+    }
+    if (!sessionSeed) {
+      await page.waitForTimeout(1000);
+    }
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(300);
 
     await use(page);
     await page.close();

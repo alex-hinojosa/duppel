@@ -30,13 +30,17 @@ importScripts("profiles.js", "poisoner.js");
 //   no profile → calls rotateIdentity() → fresh identity + new UA rule.
 //   The 24h alarm also rotates within a running session.
 //
-// Known residual — cold-start race:
-//   On the first navigation of a new tab to a new origin, sessionStorage is empty.
-//   anti-fingerprint.js (document_start, MAIN world) generates a random seed →
-//   JS profile may differ from the network UA header for one page load.
-//   bridge.js detects the desync via seedObserved → background re-injects the
-//   session seed → tab reloads with correct identity (~100ms window).
-//   Item 2 (first-nav UA alignment) addresses this further via pre-set DNR rule.
+// Cold-start alignment (Item 2):
+//   On cold start, restoreState() reads lastSeed/lastUA from chrome.storage.local
+//   and applies the stale UA to the DNR rule immediately, before rotateIdentity()
+//   generates a fresh identity (~ms later). Pre-injection via chrome.tabs.onUpdated
+//   (injectImmediately:true) races the session seed into sessionStorage before
+//   anti-fingerprint.js runs. If pre-injection wins, no desync occurs.
+//   If pre-injection loses the race, anti-fingerprint.js generates a random seed
+//   and bridge.js sends seedObserved — background silently corrects sessionStorage
+//   via scripting.executeScript (no reload). The first page load on a new origin
+//   may have a JS/network UA mismatch (documented residual gap); all subsequent
+//   same-origin navigations are aligned.
 
 // === State ===
 const STATE = {
@@ -158,7 +162,14 @@ async function restoreState() {
     }
   }
 
+  // Item 2: On cold start (no session profile), apply stale UA from local
+  // storage immediately so the DNR rule has a spoofed value before any
+  // navigation fires. rotateIdentity() below overwrites with fresh UA ~ms later.
   if (!sessionData.profile) {
+    const local = await chrome.storage.local.get(["lastSeed", "lastUA"]);
+    if (local.lastUA) {
+      await updateUAHeaderRule(local.lastUA);
+    }
     await rotateIdentity();
   } else {
     // Re-apply UA header rule from stored profile. DNR dynamic rules
@@ -180,6 +191,45 @@ async function restoreState() {
 chrome.runtime.onStartup.addListener(restoreState);
 // Also restore immediately on script load (covers SW wake from idle)
 restoreState();
+
+// === Item 2: Seed Pre-injection ===
+// Pre-inject session seed into sessionStorage before content scripts run.
+// chrome.tabs.onUpdated fires with status "loading" when a navigation commits.
+// injectImmediately:true races ahead of document_start content scripts.
+// If the injection wins, anti-fingerprint.js finds __pg_seed__ already set
+// and uses the session profile — no desync, no reload.
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== "loading") return;
+  if (!STATE.sessionSeed || !STATE.enabled) return;
+  if (!tab.url || tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://")) return;
+
+  const seedToInject = (STATE.identityMode === "session")
+    ? STATE.sessionSeed
+    : (STATE.tabSeeds[tabId] || STATE.sessionSeed);
+
+  chrome.scripting.executeScript({
+    // allFrames:false is intentional — pre-inject into the top frame only.
+    // Cross-origin iframes have their own sessionStorage partitions and cannot
+    // share __pg_seed__ with the top frame. Injecting into iframes would write
+    // seeds that anti-fingerprint.js in those frames may or may not read
+    // (depends on iframe origin). The cross-origin iframe residual is explicit
+    // and accepted as a boundary of Item 2's alignment guarantee.
+    target: { tabId: tabId, allFrames: false },
+    world: "MAIN",
+    injectImmediately: true,
+    func: (s) => {
+      try {
+        // Only set if not already present — preserves existing seed on
+        // same-origin navigations and avoids overwriting if anti-fingerprint.js
+        // already ran (race lost scenario).
+        if (!sessionStorage.getItem("__pg_seed__")) {
+          sessionStorage.setItem("__pg_seed__", String(s));
+        }
+      } catch(e) {}
+    },
+    args: [seedToInject],
+  }).catch(() => {}); // Tab may not be injectable (chrome://, devtools, etc.)
+});
 
 // === Dynamic User-Agent Header Rule ===
 // Updates the declarativeNetRequest dynamic rule to spoof the UA HTTP header
@@ -222,6 +272,10 @@ async function createIdentity(seed) {
   STATE.sessionSeed = seed;
   const profile = generateProfile(seed);
   await chrome.storage.session.set({ profile: profile, sessionSeed: seed });
+  // Item 2: persist for cold-start recovery. On next browser launch,
+  // restoreState() reads lastSeed/lastUA to bootstrap the DNR rule
+  // before rotateIdentity() generates a fresh identity.
+  await chrome.storage.local.set({ lastSeed: seed, lastUA: profile.userAgent });
   await updateUAHeaderRule(profile.userAgent);
   return { seed, profile };
 }
@@ -317,6 +371,22 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
               configs: configs,
             });
             usedPageContext = true;
+
+            // DOM chaff: send attribute injection configs alongside network chaff.
+            // Uses same tab, same interaction window. One-shot per page load
+            // (bridge.js enforces _domChaffApplied guard).
+            const domConfigs = POISONER.buildDOMChaffConfigs(STATE.chaosLevel);
+            if (domConfigs.length > 0) {
+              for (const dc of domConfigs) {
+                if (dc.injectPixel) dc.pixelSrc = POISONER.PIXEL_GIF;
+              }
+              try {
+                await chrome.tabs.sendMessage(tab.id, {
+                  type: "queueDOMChaff",
+                  configs: domConfigs,
+                });
+              } catch(e) {}
+            }
           }
         } catch(e) {
           // sendMessage failed (no content script, restricted page, etc.)
@@ -560,6 +630,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               configs: configs,
             });
             usedPageContext = true;
+
+            // DOM chaff alongside network chaff (same as alarm path).
+            const domConfigs = POISONER.buildDOMChaffConfigs(STATE.chaosLevel);
+            if (domConfigs.length > 0) {
+              for (const dc of domConfigs) {
+                if (dc.injectPixel) dc.pixelSrc = POISONER.PIXEL_GIF;
+              }
+              try {
+                await chrome.tabs.sendMessage(tab.id, {
+                  type: "queueDOMChaff",
+                  configs: domConfigs,
+                });
+              } catch(e) {}
+            }
           }
         } catch(e) {}
         // No SW fallback — page-context only (item 4 invariant).
@@ -599,6 +683,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         STATE.stats.fakeBeaconsFired += msg.count;
         persistStats();
       }
+      break;
+
+    case "domChaffApplied":
+      // bridge.js reports how many ad containers received attribute injection.
+      // Informational — does not increment fakeBeaconsFired (no network).
       break;
 
     case "testDNRChaff":
@@ -648,10 +737,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         (async () => {
           try {
             if (STATE.identityMode === "session") {
-              // Session mode: if the page used a seed that doesn't match
-              // the session seed, the page is desynced (first-cold-visit
-              // race). Inject the session seed and reload to recover.
               if (observedSeed !== STATE.sessionSeed && STATE.sessionSeed) {
+                // Item 2: Silently correct sessionStorage for future
+                // same-origin navigations. Do NOT reload — the reload itself
+                // is a fingerprinting signal (performance.navigation.type === 1).
+                // The first page load is the documented residual gap; all
+                // subsequent navigations on this origin will use the correct seed.
                 await chrome.scripting.executeScript({
                   target: { tabId: sender.tab.id, allFrames: true },
                   world: "MAIN",
@@ -660,9 +751,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   },
                   args: [STATE.sessionSeed],
                 }).catch(() => {});
-                // Reload to apply the correct seed
-                try { await chrome.tabs.reload(sender.tab.id); } catch(e) {}
-                return; // Don't store the wrong seed
+                // Store the SESSION seed, not the observed (wrong) seed
+                STATE.tabSeeds[sender.tab.id] = STATE.sessionSeed;
+                await persistTabSeeds();
+                return;
               }
               // Seed matches session — store it
               STATE.tabSeeds[sender.tab.id] = observedSeed;

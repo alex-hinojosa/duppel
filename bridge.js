@@ -11,6 +11,10 @@
  * - Handles site override / disable by asking background.js, which
  *   sets the __pgd cookie via chrome.scripting.executeScript (CSP-safe).
  * - Only the top frame syncs the seed (iframe desync prevention).
+ *
+ * Item 2 note (2026-05-12): seedObserved desync no longer triggers tab
+ * reload. Background silently corrects sessionStorage instead. The reload
+ * was itself a fingerprinting signal (performance.navigation.type === 1).
  */
 
 (function() {
@@ -159,6 +163,44 @@
     }
   }
 
+  // === DOM Chaff — attribute injection into ad containers (v2 item 4) ===
+  // Applies HTML-attribute-level chaff metadata to existing ad/tracker
+  // containers found on the page. One-shot per page load (no mutation
+  // observer, no repeated injection). Uses data: URI pixels only —
+  // no network requests from DOM chaff path.
+  let _domChaffApplied = false;
+
+  function _applyDOMChaff(configs) {
+    if (_domChaffApplied) return 0;
+    _domChaffApplied = true;
+
+    let applied = 0;
+    for (const cfg of configs) {
+      let el;
+      try { el = document.querySelector(cfg.selector); } catch(e) { continue; }
+      if (!el) continue;
+
+      for (const attr of cfg.attributes) {
+        if (!el.hasAttribute(attr.key)) {
+          el.setAttribute(attr.key, attr.value);
+        }
+      }
+
+      if (cfg.injectPixel && cfg.pixelSrc) {
+        const img = document.createElement("img");
+        img.src = cfg.pixelSrc;
+        img.width = 1;
+        img.height = 1;
+        img.style.cssText = "position:absolute;left:-9999px;top:-9999px;opacity:0;pointer-events:none;";
+        img.setAttribute("data-ad-status", "filled");
+        el.appendChild(img);
+      }
+
+      applied++;
+    }
+    return applied;
+  }
+
   // === Listen for messages from background ===
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === "overrideChanged") {
@@ -178,6 +220,21 @@
         _chaffFallbackTimer = null;
         if (_chaffQueue) _fireChaffBatch();
       }, 5 * 60 * 1000);
+    } else if (msg.type === "queueDOMChaff" && Array.isArray(msg.configs)) {
+      if (window !== window.top) return;
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", function() {
+          const count = _applyDOMChaff(msg.configs);
+          try {
+            chrome.runtime.sendMessage({ type: "domChaffApplied", count: count });
+          } catch(e) {}
+        }, { once: true });
+      } else {
+        const count = _applyDOMChaff(msg.configs);
+        try {
+          chrome.runtime.sendMessage({ type: "domChaffApplied", count: count });
+        } catch(e) {}
+      }
     }
   });
 

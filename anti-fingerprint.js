@@ -240,6 +240,11 @@
   }
 
   // === Session seed ===
+  // Background.js pre-injects the session seed via chrome.tabs.onUpdated +
+  // injectImmediately (Item 2). If the pre-injection won the race, __pg_seed__
+  // is already set below. If not (race lost or first-ever cold start), a random
+  // seed is generated — bridge.js detects the desync and background silently
+  // corrects sessionStorage for future same-origin navigations (no reload).
   let sessionSeed;
   try {
     // Iframes: try to inherit parent seed (same-origin only)
@@ -265,6 +270,7 @@
   }
 
   const profile = generateProfile(sessionSeed);
+  const bioSeed = (profile.canvasSeed ^ 0x42494F4D) >>> 0; // biometric noise seed
 
   // Compute DST-aware offset BEFORE we proxy Intl.DateTimeFormat
   const currentTzOffset = getTimezoneOffset(profile.timezone);
@@ -1114,19 +1120,50 @@
   // Reduces precision of timing, coordinate, and scroll surfaces used by
   // behavioral biometric classifiers (ThreatMetrix, Trusteer, FingerprintJS
   // Pro). Does NOT synthesize a different human — raises classification cost
-  // by adding deterministic noise. All noise derived from session seed.
+  // by adding deterministic noise. All noise derived from session seed via
+  // bioSeed, using truncated Gaussian (hash-based Box-Muller) for non-uniform
+  // distribution. Cross-surface coherence: shared bioSeed + per-surface salts.
   //
   // Surfaces: Event.timeStamp, performance.now(), MouseEvent coordinates,
   // WheelEvent deltas. Coordinate/wheel noise skipped for synthetic events
   // (isTrusted=false), editable/canvas/SVG targets, drag events, and
   // allowlisted high-interaction sites. Timestamp jitter applies to trusted
-  // events only (synthetic events bypass); performance.now quantization
-  // applies everywhere. Both are invisible to the user.
+  // events only (synthetic events bypass); performance.now quantization +
+  // Gaussian jitter applies everywhere (monotonic-clamped). Both are invisible
+  // to the user.
+
+  // Per-surface salts for cross-surface coherence (Gate 4).
+  const BIO_SALT_TIMESTAMP = 0x54494D45;
+  const BIO_SALT_PERFNOW   = 0x50455246;
+  const BIO_SALT_MOUSE_X   = 0x4D585858;
+  const BIO_SALT_MOUSE_Y   = 0x4D595959;
+
+  // Truncated Gaussian via hash-based Box-Muller (Gate 2: non-uniform).
+  // Pure function of inputs — no advancing state (Gate 5).
+  // Clamp (not re-sample) preserves determinism.
+  function bioGaussian(seed, salt, inputHash, sigma, bound) {
+    let h1 = seed ^ salt ^ inputHash;
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 0x45d9f3b);
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 0x45d9f3b);
+    h1 = (h1 ^ (h1 >>> 16)) >>> 0;
+    let h2 = seed ^ Math.imul(salt, 0x9e3779b9) ^ inputHash;
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 0x45d9f3b);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 0x45d9f3b);
+    h2 = (h2 ^ (h2 >>> 16)) >>> 0;
+    const u1 = (h1 + 1) / 4294967297;
+    const u2 = (h2 + 1) / 4294967297;
+    let z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2) * sigma;
+    if (z > bound) z = bound;
+    if (z < -bound) z = -bound;
+    return z;
+  }
 
   // Allowlist: skip coordinate + wheel noise on high-interaction sites.
   const _bioCoordSkip = new Set([
     "docs.google.com", "sheets.google.com", "slides.google.com",
     "figma.com", "www.figma.com",
+    "maps.google.com", "www.openstreetmap.org",
+    "excalidraw.com", "www.canva.com",
   ]);
   const _skipCoordNoise = _bioCoordSkip.has(location.hostname);
 
@@ -1152,10 +1189,7 @@
         return real;
       }
 
-      let h = profile.canvasSeed ^ ((real * 1000) >>> 0);
-      h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
-      h = (h ^ (h >>> 16)) >>> 0;
-      const jitter = ((h % 200) - 100) / 100; // ±1ms
+      const jitter = bioGaussian(bioSeed, BIO_SALT_TIMESTAMP, (real * 1000) >>> 0, 0.5, 1.0); // ±1ms Gaussian
 
       const result = real + jitter;
       _tsCache.set(this, result);
@@ -1164,11 +1198,22 @@
   }
 
   // --- performance.now() precision reduction ---
-  // Quantize to 0.1ms. Conservative — does not break animations,
-  // editors, or perf-sensitive apps (60fps = 16.67ms frames).
+  // Quantize to 0.1ms + Gaussian jitter (±0.1ms max), with monotonic clamp.
+  // The jitter is a pure function of the quantized bucket, so adjacent buckets
+  // can produce different offsets. Without clamping, a later call could return
+  // a smaller value — violating the monotonic non-decreasing invariant that
+  // timing consumers and fingerprint detectors expect. The closure-held
+  // _perfLast ensures output never decreases.
   const _origPerfNow = Performance.prototype.now;
+  let _perfLast = 0;
   Performance.prototype.now = disguise(function() {
-    return Math.round(_origPerfNow.call(this) * 10) / 10;
+    const real = _origPerfNow.call(this);
+    const quantized = Math.round(real * 10) / 10;
+    const jitter = bioGaussian(bioSeed, BIO_SALT_PERFNOW, (quantized * 10000) >>> 0, 0.03, 0.1);
+    const result = quantized + jitter;
+    if (result < _perfLast) return _perfLast;
+    _perfLast = result;
+    return result;
   }, "now");
 
   // --- Shared helpers for coordinate/wheel noise ---
@@ -1220,21 +1265,11 @@
       const rx = _origCoordGetters.clientX ? _origCoordGetters.clientX.call(event) : 0;
       const ry = _origCoordGetters.clientY ? _origCoordGetters.clientY.call(event) : 0;
 
-      // X-axis noise from hash(canvasSeed, clientX)
-      let hx = profile.canvasSeed ^ Math.imul(rx | 0, 2654435761);
-      hx = Math.imul(hx ^ (hx >>> 16), 0x45d9f3b);
-      hx = (hx ^ (hx >>> 16)) >>> 0;
-
-      // Y-axis noise from hash(canvasSeed ^ golden_ratio, clientY)
-      let hy = (profile.canvasSeed ^ 0x9e3779b9) ^ Math.imul(ry | 0, 2654435761);
-      hy = Math.imul(hy ^ (hy >>> 16), 0x45d9f3b);
-      hy = (hy ^ (hy >>> 16)) >>> 0;
-
-      // 50% no change, 25% +1, 25% -1
-      cached = {
-        nx: (hx & 3) === 0 ? 1 : (hx & 3) === 1 ? -1 : 0,
-        ny: (hy & 3) === 0 ? 1 : (hy & 3) === 1 ? -1 : 0,
-      };
+      // Gaussian coordinate noise: sigma=0.4, bound=1.0, then round.
+      // ~62% zero, ~19% +1, ~19% -1. Still ±1px max.
+      const gx = bioGaussian(bioSeed, BIO_SALT_MOUSE_X, rx | 0, 0.4, 1.0);
+      const gy = bioGaussian(bioSeed, BIO_SALT_MOUSE_Y, ry | 0, 0.4, 1.0);
+      cached = { nx: Math.round(gx), ny: Math.round(gy) };
       _mouseCache.set(event, cached);
       return cached;
     }
@@ -1539,12 +1574,14 @@
   //   invert), stable re-reads via WeakMap. Synthetic events (isTrusted=false)
   //   bypass jitter — modifying constructor-controlled values is a detection
   //   oracle.
-  //   performance.now(): 0.1ms quantization (10x coarser than Chrome default).
-  //   MouseEvent clientX/Y/screenX/Y/pageX/Y/x/y: ±0-1px per-axis noise
-  //   (all x-props share one noise, all y-props share another — preserves
+  //   performance.now(): 0.1ms quantization + Gaussian jitter (±0.1ms max),
+  //   monotonic-clamped to prevent backward movement.
+  //   MouseEvent clientX/Y/screenX/Y/pageX/Y/x/y: ±0-1px Gaussian per-axis
+  //   noise (all x-props share one noise, all y-props share another — preserves
   //   pageX-clientX=scrollX invariant). Skipped on synthetic events, editable
   //   elements, canvas, SVG, drag events, and allowlisted sites (Google Docs,
-  //   Figma). WheelEvent deltaY/X: integer quantization removes sub-pixel
+  //   Figma, Google Maps, OpenStreetMap, Excalidraw, Canva).
+  //   WheelEvent deltaY/X: integer quantization removes sub-pixel
   //   trackpad precision, same skip contract as MouseEvent. This is precision
   //   reduction, NOT biometric spoofing — raises classifier cost, does not
   //   synthesize a different human.

@@ -1,22 +1,67 @@
 import { test, expect, getTestPageUrl } from '../fixtures/extension';
 
 /**
- * Helper: open a page and wait for the desync-reload cycle to complete.
- * On a fresh tab to a new origin, anti-fingerprint.js generates a random seed
- * that doesn't match the session identity. bridge.js detects this, background
- * re-injects the correct seed, and reloads the tab. After this, JS and network
- * UA should match. We wait for the reload by navigating, waiting, reloading
- * explicitly, and waiting again.
+ * Helper: open a page and wait for identity stabilization.
+ * Item 2 pre-injects the session seed via chrome.tabs.onUpdated +
+ * injectImmediately. When the pre-injection loses the race, the
+ * seedObserved handler silently corrects sessionStorage (no reload).
+ * We poll until the seed converges, then reload to apply the correct
+ * profile from the converged seed.
  */
 async function openStablePage(context: any): Promise<any> {
   const url = getTestPageUrl();
   const page = await context.newPage();
+
+  // Get the session seed from the service worker.
+  // Poll because the service worker may still be running restoreState()
+  // / rotateIdentity() / createIdentity() during initialization.
+  const sw = context.serviceWorkers()[0];
+  let sessionSeed: number | null = null;
+  if (sw) {
+    for (let i = 0; i < 30; i++) {
+      sessionSeed = await sw.evaluate(async () => {
+        const data = await chrome.storage.session.get(['sessionSeed']);
+        return data.sessionSeed || null;
+      });
+      if (sessionSeed) break;
+      await new Promise(r => setTimeout(r, 150));
+    }
+  }
+
   await page.goto(url);
-  // Wait for desync detection + reload cycle
-  await page.waitForTimeout(800);
-  // Reload to guarantee the correct seed is in sessionStorage
+  await page.waitForLoadState('domcontentloaded');
+
+  // Poll for seed convergence (seedObserved correction may take time under load)
+  if (sessionSeed) {
+    for (let i = 0; i < 30; i++) {
+      const currentSeed = await page.evaluate(() => {
+        const raw = sessionStorage.getItem('__pg_seed__');
+        return raw ? parseInt(raw, 10) : null;
+      });
+      if (currentSeed === sessionSeed) break;
+      await page.waitForTimeout(100);
+    }
+    // Re-read the latest sessionSeed in case createIdentity() ran again
+    // (the DNR rule uses the latest seed, so we must match it).
+    if (sw) {
+      const latestSeed = await sw.evaluate(async () => {
+        const data = await chrome.storage.session.get(['sessionSeed']);
+        return data.sessionSeed || null;
+      });
+      if (latestSeed) sessionSeed = latestSeed;
+    }
+    // Force-write session seed to guarantee convergence before reload
+    await page.evaluate((s) => {
+      sessionStorage.setItem('__pg_seed__', String(s));
+    }, sessionSeed);
+  } else {
+    await page.waitForTimeout(800);
+  }
+
+  // Reload to apply the converged seed (anti-fingerprint.js re-runs
+  // and reads the now-correct seed from sessionStorage).
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(300);
   return page;
 }
 

@@ -608,6 +608,97 @@
   }
 
   // ================================================================
+  // DOM CHAFF CONFIG GENERATION (v2 item 4)
+  // ================================================================
+
+  function testDOMChaffConfigGeneration() {
+    suite("DOM chaff config generation (v2 item 4)");
+
+    // AD_CONTAINER_SELECTORS defined and non-empty
+    assert(Array.isArray(POISONER.AD_CONTAINER_SELECTORS) && POISONER.AD_CONTAINER_SELECTORS.length > 0,
+      "AD_CONTAINER_SELECTORS is a non-empty array: " + POISONER.AD_CONTAINER_SELECTORS.length + " selectors",
+      "AD_CONTAINER_SELECTORS missing or empty");
+
+    // All selectors are strings
+    let allStrings = true;
+    for (const s of POISONER.AD_CONTAINER_SELECTORS) {
+      if (typeof s !== "string") { allStrings = false; break; }
+    }
+    assert(allStrings,
+      "All AD_CONTAINER_SELECTORS are strings",
+      "Some selectors are not strings");
+
+    // PIXEL_GIF is a valid data URI
+    assert(typeof POISONER.PIXEL_GIF === "string" && POISONER.PIXEL_GIF.startsWith("data:image/gif;base64,"),
+      "PIXEL_GIF is a valid data:image/gif URI",
+      "PIXEL_GIF invalid: " + (POISONER.PIXEL_GIF || "").substring(0, 40));
+
+    POISONER.selectPersona();
+
+    // Stealth: 1 config
+    const stealthConfigs = POISONER.buildDOMChaffConfigs("stealth");
+    assert(Array.isArray(stealthConfigs) && stealthConfigs.length === 1,
+      "Stealth buildDOMChaffConfigs returns 1 config",
+      "Stealth returned " + (stealthConfigs || []).length + " configs (expected 1)");
+
+    // Balanced: 1-2 configs
+    let balancedOk = true;
+    for (let i = 0; i < 10; i++) {
+      const configs = POISONER.buildDOMChaffConfigs("balanced");
+      if (!Array.isArray(configs) || configs.length < 1 || configs.length > 2) {
+        balancedOk = false;
+        assert(false, "",
+          "Balanced DOM chaff returned " + (configs || []).length + " configs (expected 1-2)");
+        break;
+      }
+    }
+    if (balancedOk) {
+      assert(true, "Balanced buildDOMChaffConfigs returns 1-2 configs (10 samples)", "");
+    }
+
+    // Chaos: 1-5 configs
+    let chaosOk = true;
+    for (let i = 0; i < 10; i++) {
+      const configs = POISONER.buildDOMChaffConfigs("chaos");
+      if (!Array.isArray(configs) || configs.length < 1 || configs.length > 5) {
+        chaosOk = false;
+        assert(false, "",
+          "Chaos DOM chaff returned " + (configs || []).length + " configs (expected 1-5)");
+        break;
+      }
+    }
+    if (chaosOk) {
+      assert(true, "Chaos buildDOMChaffConfigs returns 1-5 configs (10 samples)", "");
+    }
+
+    // Config shape validation
+    const cfg = POISONER.buildDOMChaffConfigs("balanced")[0];
+    assert(typeof cfg.selector === "string",
+      "Config has string selector: " + cfg.selector,
+      "Config selector is not a string");
+
+    assert(Array.isArray(cfg.attributes) && cfg.attributes.length >= 2,
+      "Config has 2+ attributes: " + cfg.attributes.length,
+      "Config attributes missing or too few: " + (cfg.attributes || []).length);
+
+    assert(typeof cfg.injectPixel === "boolean",
+      "Config has boolean injectPixel: " + cfg.injectPixel,
+      "Config injectPixel is not boolean: " + typeof cfg.injectPixel);
+
+    // Attribute shape: each has key and value strings, keys are data-* prefixed
+    let attrValid = true;
+    for (const attr of cfg.attributes) {
+      if (typeof attr.key !== "string" || typeof attr.value !== "string" || !attr.key.startsWith("data-")) {
+        attrValid = false;
+        break;
+      }
+    }
+    assert(attrValid,
+      "All attributes have string key (data-* prefixed) and string value",
+      "Some attributes have invalid shape");
+  }
+
+  // ================================================================
   // RUN ALL
   // ================================================================
 
@@ -627,6 +718,7 @@
     await testFireUsesConfig();
     testDNRChaffCompatibility();
     testChaffSendBeaconAvailability();
+    testDOMChaffConfigGeneration();
 
     updateSummary();
   }
