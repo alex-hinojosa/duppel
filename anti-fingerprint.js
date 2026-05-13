@@ -489,6 +489,18 @@
   spoof(Screen.prototype, "colorDepth", () => profile.colorDepth);
   spoof(Screen.prototype, "pixelDepth", () => profile.colorDepth);
 
+  // === Screen position spoofing ===
+  // window.screenX/screenY and screen.availLeft/availTop leak the browser
+  // window's absolute position on the physical display. On multi-monitor
+  // setups this is nearly unique (ratio <0.00001 on AmIUnique). Spoof to 0
+  // (single-monitor primary position) for all profiles.
+  spoof(Screen.prototype, "availLeft", () => 0);
+  spoof(Screen.prototype, "availTop", () => 0);
+  spoof(window, "screenX", () => 0);
+  spoof(window, "screenY", () => 0);
+  spoof(window, "screenLeft", () => 0);
+  spoof(window, "screenTop", () => 0);
+
   const browserChrome = 80 + Math.floor(mulberry32(profile.canvasSeed)() * 40);
   const innerW = profile.screen.width;
   const innerH = profile.screen.height - browserChrome;
