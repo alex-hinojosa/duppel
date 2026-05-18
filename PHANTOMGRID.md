@@ -296,16 +296,18 @@ The review loop worked exactly as designed on this bug. I had my hands on the co
 
 ## Quantitative Evaluation Against Live Fingerprinting Services
 
-**Date:** 2026-05-18 | **Branch:** `v3/stream3-benchmark` | **Commit:** `0fe00c1`
+**Date:** 2026-05-18 | **Branch:** `v3/stream3-benchmark` | **Commit:** `bfc8242`
 
-We built an automated benchmark suite (15 Playwright specs) that navigates to four industry-standard fingerprinting services with PhantomGrid loaded, extracts the numerical metrics those services compute, and validates identity coherence, session stability, and rotation effectiveness. This replaces a manual testing protocol. Total test count across the project: 252 (237 local/rotation + 15 external benchmark), all passing.
+We built an automated benchmark suite (15 Playwright specs) that navigates to four industry-standard fingerprinting services with PhantomGrid loaded, extracts the numerical metrics those services compute, and validates identity coherence, session stability, and rotation behavior. This replaces a manual testing protocol. Total test count across the project: 252 (237 local/rotation + 15 external benchmark). The suite exits green (15/15 expected), but individual benchmark artifacts carry a per-service status of `pass` or `inconclusive` — see the JSON files at `benchmark-results/` and `test-results/benchmark-*.json` for the authoritative per-run data.
+
+**Important:** Values below are from sample runs. CreepJS and Cover Your Tracks results vary between runs due to live-service behavior (caching, computation timing, server-side variation). The JSON artifacts from each run are the authoritative source.
 
 ### Results by Service
 
 **BrowserLeaks** — Canvas hash, WebGL, navigator properties
 
-| Surface | Reported Value | Real Hardware | Masked? |
-|---------|---------------|---------------|---------|
+| Surface | Reported Value (sample) | Real Hardware | Masked? |
+|---------|------------------------|---------------|---------|
 | WebGL Vendor | Google Inc. (Apple) | Qualcomm | Yes |
 | WebGL Renderer | ANGLE (Apple, Apple M2, OpenGL 4.1) | Adreno (Snapdragon X Elite) | Yes |
 | User-Agent | Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ... Chrome/147.0.0.0 | Windows 11 / Snapdragon | Yes |
@@ -331,20 +333,21 @@ Per-page canvas noise means FingerprintJS computes a different visitorId per tab
 
 | Metric | Result |
 |--------|--------|
-| Trust Score | 0% |
-| Lie Count | 0 |
-| Fingerprint Hash changes on rotation | Yes |
+| Trust Score | Varies by run (observed: 0%–38%) |
+| Lie Count | Varies by run (observed: 0 or null) |
+| Fingerprint Hash changes on rotation | Inconclusive — varies by run |
 
-0% trust score is the best outcome: CreepJS considers the entire fingerprint unreliable for tracking. Despite maximum distrust, CreepJS detected **zero lies** -- PhantomGrid's spoofing (hardened `toString()`, correct property descriptors, preserved prototype chains) bypasses all lie detection heuristics.
+CreepJS results are run-dependent. Trust scores have ranged from 0% (maximum distrust of the fingerprint) to 38% across runs. Fingerprint hash rotation has been observed to change in some runs and remain identical in others — the benchmark records the outcome honestly as `pass` or `inconclusive` per run. When CreepJS returns 0% trust with zero lie detections, this indicates PhantomGrid's spoofing (hardened `toString()`, correct property descriptors, preserved prototype chains) bypasses lie detection heuristics. See `test-results/benchmark-creepjs-*.json` for per-run values.
 
 **EFF Cover Your Tracks** — Bits of identifying information
 
 | Metric | Result |
 |--------|--------|
-| Bits of identifying information | 18.43 |
+| Bits of identifying information | ~18 bits (sample: 18.43) |
 | Tracker blocking | Blocked |
+| Rotation | Inconclusive — varies by run |
 
-18.43 bits places PhantomGrid in the normal browser range (typical: 18-22 bits). It doesn't stand out as either uniquely identifiable or suspiciously uniform.
+~18 bits places PhantomGrid in the normal browser range (typical: 18-22 bits). Tracker blocking is consistently confirmed. Rotation comparison is recorded as `pass` or `inconclusive` depending on whether CYT reports different values pre/post — the live test involves a full server-side computation that may return identical results within a session.
 
 **Cloudflare** — Bot detection (pass/fail). Not blocked.
 
@@ -354,7 +357,7 @@ Per-page canvas noise means FingerprintJS computes a different visitorId per tab
 
 2. **FingerprintJS visitorId is not stable across tabs.** This is caused by per-page canvas noise and is by design. Per-page randomness prevents a fingerprinting service from correlating multiple tabs belonging to the same user, which is the stronger privacy posture.
 
-3. **CreepJS: zero lies despite zero trust.** The spoofing is clean enough that CreepJS can't pinpoint which surfaces are faked, even though it considers the overall fingerprint synthetic. This validates the `disguise()` / `spoof()` approach (native-shaped `toString()`, correct descriptors, preserved prototype chains).
+3. **CreepJS and Cover Your Tracks rotation is not uniformly validated.** These services may return identical pre/post fingerprint composites within a browser session due to caching or computation dominated by un-noised surfaces. The benchmark records these outcomes as `inconclusive` rather than claiming confirmed rotation. FingerprintJS rotation (3 distinct visitorIds across 3 rotations) is the consistently validated rotation signal across live services.
 
 ---
 
