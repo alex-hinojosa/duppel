@@ -79,9 +79,20 @@
     ORIG.audioConnect = AudioNode.prototype.connect;
   }
 
+  // === Host browser detection (v3 item 4a) ===
+  // Detect BEFORE any spoofing. Used to filter UA_GROUPS to same-engine
+  // profiles only — prevents cross-engine contradiction fingerprints
+  // (e.g., Chrome TLS + Firefox UA, ANGLE WebGL + native GL strings).
+  const _realUA = navigator.userAgent;
+  const _isFirefox = /Firefox\//.test(_realUA);
+  const _isEdge = /Edg\//.test(_realUA);
+  // Chrome, Edge, Opera, Brave all share Chromium engine (ANGLE WebGL, Client Hints)
+  const _isChromium = !_isFirefox && /Chrome\//.test(_realUA);
+
   // === Plausible profile combos (correlated GPU/UA groups) ===
   const UA_GROUPS = [
     {
+      engine: "chromium",
       uas: [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
@@ -99,6 +110,7 @@
       ],
     },
     {
+      engine: "chromium",
       uas: [
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
@@ -111,6 +123,7 @@
       ],
     },
     {
+      engine: "firefox",
       uas: [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:139.0) Gecko/20100101 Firefox/139.0",
@@ -125,6 +138,7 @@
       ],
     },
     {
+      engine: "firefox",
       uas: [
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:140.0) Gecko/20100101 Firefox/140.0",
       ],
@@ -136,6 +150,7 @@
       ],
     },
     {
+      engine: "chromium",
       uas: [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0",
       ],
@@ -148,6 +163,7 @@
       ],
     },
     {
+      engine: "chromium",
       uas: [
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
       ],
@@ -198,9 +214,16 @@
     return arr[Math.floor(rng() * arr.length)];
   }
 
+  // Filter UA_GROUPS to same-engine profiles (v3 item 4a).
+  // Chromium hosts get chromium profiles (Chrome + Edge + Linux Chrome).
+  // Firefox hosts get firefox profiles only. Prevents TLS/rendering
+  // contradiction fingerprints.
+  const _hostEngine = _isFirefox ? "firefox" : "chromium";
+  const UA_GROUPS_FILTERED = UA_GROUPS.filter(g => g.engine === _hostEngine);
+
   function generateProfile(seed) {
     const rng = mulberry32(seed);
-    const group = pickFrom(UA_GROUPS, rng);
+    const group = pickFrom(UA_GROUPS_FILTERED.length > 0 ? UA_GROUPS_FILTERED : UA_GROUPS, rng);
     const ua = pickFrom(group.uas, rng);
     const gpu = pickFrom(group.gpus, rng);
     return {
@@ -904,6 +927,45 @@
   // === Font fingerprinting defense (measureText noise) ===
   // Rowan pass 4 finding #5: noise must be deterministic for the same input.
   // Hash the text content + font + canvasSeed to produce stable noise.
+  //
+  // v3 item 5b: Font enumeration resistance. CSS font probing works by
+  // measuring text width with a candidate font vs a fallback — if widths
+  // differ, the font is installed. Amplified noise for known probe fonts
+  // collapses the width delta signal, making font presence undetectable
+  // via measureText. The JS-side measurement becomes unreliable while
+  // CSS rendering is unaffected.
+  const _fontProbeSet = new Set([
+    // Top system fonts used by FingerprintJS, CreepJS, and font-enumeration scripts
+    "Arial", "Verdana", "Times New Roman", "Georgia", "Trebuchet MS",
+    "Courier New", "Impact", "Comic Sans MS", "Palatino Linotype",
+    "Lucida Console", "Lucida Sans Unicode", "Tahoma", "Century Gothic",
+    "Bookman Old Style", "Garamond", "MS Gothic", "MS PGothic",
+    "MS Sans Serif", "MS Serif", "Wingdings", "Webdings", "Symbol",
+    "Segoe UI", "Calibri", "Cambria", "Consolas", "Candara",
+    "Franklin Gothic Medium", "Copperplate Gothic Bold",
+    "Papyrus", "Brush Script MT", "Rockwell", "Bodoni MT",
+    // macOS-specific probes
+    "Helvetica Neue", "Menlo", "Monaco", "Optima", "Futura",
+    "American Typewriter", "Baskerville", "Didot", "Gill Sans",
+    // Linux probes
+    "DejaVu Sans", "Liberation Sans", "Ubuntu", "Noto Sans",
+  ]);
+
+  function _isFontProbe(fontString) {
+    if (!fontString) return false;
+    // CSS font shorthand: "12px Arial" or "bold 14px 'Times New Roman', serif"
+    // Extract font-family portion (everything after the last size token)
+    const parts = fontString.split(/\d+(?:px|pt|em|rem|%)\s*/);
+    const familyPart = parts.length > 1 ? parts[parts.length - 1] : fontString;
+    // Check each family in the comma-separated list
+    const families = familyPart.split(",");
+    for (const f of families) {
+      const clean = f.trim().replace(/^['"]|['"]$/g, "");
+      if (_fontProbeSet.has(clean)) return true;
+    }
+    return false;
+  }
+
   const origMeasureText = CanvasRenderingContext2D.prototype.measureText;
   CanvasRenderingContext2D.prototype.measureText = disguise(function(text) {
     const metrics = origMeasureText.call(this, text);
@@ -914,7 +976,12 @@
       h = Math.imul(h ^ input.charCodeAt(i), 0x5bd1e995);
       h = (h ^ (h >>> 15)) >>> 0;
     }
-    const noise = ((h % 200) - 100) / 1000; // ±0.1px, stable for same input
+    // v3 5b: amplify noise for known font-probe fonts (±0.5px vs ±0.1px)
+    // to collapse the width delta used by font enumeration scripts
+    const isProbe = _isFontProbe(this.font);
+    const noise = isProbe
+      ? ((h % 1000) - 500) / 1000  // ±0.5px for probe fonts
+      : ((h % 200) - 100) / 1000;  // ±0.1px for normal use
     return new Proxy(metrics, {
       get(target, prop) {
         if (prop === "width") return target.width + noise;
@@ -1611,6 +1678,33 @@
       });
       return ORIG.promiseResolve.call(Promise, devices);
     }, 'enumerateDevices', 0);
+  }
+
+  // === Battery Status API spoofing (v3 item 5c) ===
+  // navigator.getBattery() returns charging state, level, charging/discharging
+  // time. Deprecated but still available in Chrome. High-entropy surface.
+  // Spoofed to lowest-entropy state: fully charged on AC power.
+  if (typeof navigator !== 'undefined' && typeof navigator.getBattery === 'function') {
+    const _fakeBattery = {
+      charging: true,
+      chargingTime: 0,
+      dischargingTime: Infinity,
+      level: 1.0,
+      addEventListener: function() {},
+      removeEventListener: function() {},
+      dispatchEvent: function() { return true; },
+      onchargingchange: null,
+      onchargingtimechange: null,
+      ondischargingtimechange: null,
+      onlevelchange: null,
+    };
+    ORIG.defineProperty.call(Object, _fakeBattery, Symbol.toStringTag, {
+      value: 'BatteryManager', configurable: true,
+    });
+    ORIG.freeze.call(Object, _fakeBattery);
+    navigator.getBattery = disguise(function getBattery() {
+      return ORIG.promiseResolve.call(Promise, _fakeBattery);
+    }, 'getBattery', 0);
   }
 
   // === Worker navigator override script ===
