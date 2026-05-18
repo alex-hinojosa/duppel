@@ -8,9 +8,15 @@
  */
 
 // === Correlated UA/GPU groups (matches anti-fingerprint.js exactly) ===
+// Host browser detection — mirrors core.js logic.
+// In a service worker / event page, navigator.userAgent is the real browser UA.
+const _hostEngine = (typeof navigator !== "undefined" && /Firefox\//.test(navigator.userAgent))
+  ? "firefox" : "chromium";
+
 const UA_GROUPS = [
   {
     // Chrome on Windows
+    engine: "chromium",
     uas: [
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
@@ -29,6 +35,7 @@ const UA_GROUPS = [
   },
   {
     // Chrome on macOS
+    engine: "chromium",
     uas: [
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
@@ -42,6 +49,7 @@ const UA_GROUPS = [
   },
   {
     // Firefox on Windows
+    engine: "firefox",
     uas: [
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0",
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:139.0) Gecko/20100101 Firefox/139.0",
@@ -57,6 +65,7 @@ const UA_GROUPS = [
   },
   {
     // Firefox on macOS
+    engine: "firefox",
     uas: [
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:140.0) Gecko/20100101 Firefox/140.0",
     ],
@@ -69,6 +78,7 @@ const UA_GROUPS = [
   },
   {
     // Edge on Windows
+    engine: "chromium",
     uas: [
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0",
     ],
@@ -82,6 +92,7 @@ const UA_GROUPS = [
   },
   {
     // Chrome on Linux
+    engine: "chromium",
     uas: [
       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
     ],
@@ -136,11 +147,15 @@ function pickFrom(arr, rng) {
   return arr[Math.floor(rng() * arr.length)];
 }
 
+// Engine-filtered pool — mirrors core.js UA_GROUPS_FILTERED.
+// Chromium hosts pick from chromium groups only; Firefox from firefox only.
+const UA_GROUPS_FILTERED = UA_GROUPS.filter(g => g.engine === _hostEngine);
+
 // generateProfile — MUST match anti-fingerprint.js exactly.
 // Same seed → same PRNG sequence → same picks → same profile.
 function generateProfile(seed) {
   const rng = mulberry32(seed);
-  const group = pickFrom(UA_GROUPS, rng);
+  const group = pickFrom(UA_GROUPS_FILTERED.length > 0 ? UA_GROUPS_FILTERED : UA_GROUPS, rng);
   const ua = pickFrom(group.uas, rng);
   const gpu = pickFrom(group.gpus, rng);
   return {

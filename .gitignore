@@ -17,6 +17,7 @@ blob-report/
 
 # Build artifacts (regeneratable from rules/*.json)
 _metadata/generated_indexed_rulesets/
+build/
 
 # Renamed-but-preserved historical tree (Item 4 third-corrective rename, kept on NAS for reference, NOT canonical)
 _stale_nested_copy/
