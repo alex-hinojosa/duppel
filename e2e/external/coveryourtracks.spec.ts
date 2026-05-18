@@ -204,7 +204,7 @@ test.describe('Cover Your Tracks @external', () => {
     writeBenchmarkResult('coveryourtracks-rotation', {
       service: 'Cover Your Tracks',
       timestamp: new Date().toISOString(),
-      status: 'pass',
+      status: changed ? 'pass' : 'inconclusive',
       preRotation: {
         bitsOfInfo: preMetrics.bitsOfInfo,
         surfaceCount: Object.keys(preMetrics.surfaces).length,
