@@ -13,9 +13,12 @@ export interface BenchmarkMetrics {
   [key: string]: string | number | boolean | null | undefined | string[];
 }
 
+export type BenchmarkStatus = 'pass' | 'fail' | 'inconclusive';
+
 export interface BenchmarkResult {
   service: string;
   timestamp: string;
+  status: BenchmarkStatus;
   preRotation: BenchmarkMetrics;
   postRotation: BenchmarkMetrics | null;
   sessionStable: boolean;

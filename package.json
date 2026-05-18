@@ -14,7 +14,7 @@
     "test:external": "npx playwright test --project=external",
     "test:all": "npx playwright test",
     "test:report": "npx playwright show-report",
-    "test:benchmark": "npx playwright test --project=external --reporter=json > test-results/benchmark-report.json"
+    "test:benchmark": "mkdir -p test-results && npx playwright test --project=external --reporter=json > test-results/benchmark-report.json"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",

@@ -1,14 +1,16 @@
 /**
  * FingerprintJS quantitative benchmark.
- * Extracts visitorId, validates session stability, and verifies
+ * Extracts visitorId, validates cross-tab behavior, and verifies
  * rotation produces distinct identities.
+ *
+ * Required metrics are hard assertions — missing extraction is a test
+ * failure, not a skip.
  */
 
 import { test, expect } from '../fixtures/extension';
 import {
   triggerRotation,
   writeBenchmarkResult,
-  extractByRegex,
 } from '../helpers/benchmark-utils';
 
 const FPJS_URL = 'https://fingerprintjs.github.io/fingerprintjs/';
@@ -18,30 +20,18 @@ const FPJS_URL = 'https://fingerprintjs.github.io/fingerprintjs/';
  * The demo page displays a hex string once computation completes.
  */
 async function extractVisitorId(page: import('@playwright/test').Page): Promise<string | null> {
-  // Wait for the page to compute the fingerprint
   await page.waitForTimeout(5000);
 
-  // Try structured extraction first — FPJS demo renders the visitor ID prominently
   const visitorId = await page.evaluate(() => {
-    // The demo page typically shows the visitorId in a large text element
-    // Try common selectors
-    const selectors = [
-      '.visitor-id',
-      '[data-visitor-id]',
-      '.fp-result',
-      'code',
-      'pre',
-    ];
+    const selectors = ['.visitor-id', '[data-visitor-id]', '.fp-result', 'code', 'pre'];
     for (const sel of selectors) {
       const el = document.querySelector(sel);
       if (el) {
         const text = el.textContent?.trim() ?? '';
-        // visitorId is a hex string, typically 20-40 chars
         const match = text.match(/\b([0-9a-f]{16,64})\b/i);
         if (match) return match[1];
       }
     }
-    // Scan all elements for a hex string that looks like a visitor ID
     const body = document.body.textContent ?? '';
     const match = body.match(/\b([0-9a-f]{20,64})\b/i);
     return match ? match[1] : null;
@@ -63,16 +53,14 @@ test.describe('FingerprintJS @external', () => {
     const visitorId = await extractVisitorId(extensionPage);
     await extensionPage.screenshot({ path: 'test-results/fingerprintjs.png' });
 
-    if (!visitorId) {
-      test.skip(true, 'Could not extract visitorId — page structure may have changed');
-      return;
-    }
-
+    // Required metric
+    expect(visitorId, 'Required metric: FingerprintJS visitorId must be extractable').not.toBeNull();
     expect(visitorId).toMatch(/^[0-9a-f]{16,64}$/i);
 
     writeBenchmarkResult('fingerprintjs-generated', {
       service: 'FingerprintJS',
       timestamp: new Date().toISOString(),
+      status: 'pass',
       preRotation: { visitorId },
       postRotation: null,
       sessionStable: true,
@@ -94,10 +82,9 @@ test.describe('FingerprintJS @external', () => {
     await tab1.close();
     await tab2.close();
 
-    if (!id1 || !id2) {
-      test.skip(true, 'Could not extract visitorId for cross-tab check');
-      return;
-    }
+    // Required: both IDs must be extractable
+    expect(id1, 'Required metric: visitorId from tab 1 must be extractable').not.toBeNull();
+    expect(id2, 'Required metric: visitorId from tab 2 must be extractable').not.toBeNull();
 
     // PhantomGrid's per-page canvas noise means FingerprintJS will compute
     // a different visitorId per tab. This is by design — per-page randomness
@@ -110,6 +97,7 @@ test.describe('FingerprintJS @external', () => {
     writeBenchmarkResult('fingerprintjs-stability', {
       service: 'FingerprintJS',
       timestamp: new Date().toISOString(),
+      status: 'pass',
       preRotation: { visitorId_tab1: id1, visitorId_tab2: id2 },
       postRotation: null,
       sessionStable: stable,
@@ -127,10 +115,8 @@ test.describe('FingerprintJS @external', () => {
     await prePage.screenshot({ path: 'test-results/fingerprintjs-pre.png' });
     await prePage.close();
 
-    if (!preId) {
-      test.skip(true, 'Could not extract pre-rotation visitorId');
-      return;
-    }
+    // Required metric
+    expect(preId, 'Required metric: pre-rotation visitorId must be extractable').not.toBeNull();
 
     // Rotate
     await triggerRotation(context, extensionId);
@@ -142,16 +128,14 @@ test.describe('FingerprintJS @external', () => {
     await postPage.screenshot({ path: 'test-results/fingerprintjs-post.png' });
     await postPage.close();
 
-    if (!postId) {
-      test.skip(true, 'Could not extract post-rotation visitorId');
-      return;
-    }
-
+    // Required metric
+    expect(postId, 'Required metric: post-rotation visitorId must be extractable').not.toBeNull();
     expect(preId).not.toBe(postId);
 
     writeBenchmarkResult('fingerprintjs-rotation', {
       service: 'FingerprintJS',
       timestamp: new Date().toISOString(),
+      status: 'pass',
       preRotation: { visitorId: preId },
       postRotation: { visitorId: postId },
       sessionStable: true,
@@ -173,11 +157,9 @@ test.describe('FingerprintJS @external', () => {
       const id = await extractVisitorId(page);
       await page.close();
 
-      if (!id) {
-        test.skip(true, `Could not extract visitorId on rotation ${i}`);
-        return;
-      }
-      ids.push(id);
+      // Required metric per rotation
+      expect(id, `Required metric: visitorId must be extractable on rotation ${i}`).not.toBeNull();
+      ids.push(id!);
     }
 
     const unique = new Set(ids).size;
@@ -186,6 +168,7 @@ test.describe('FingerprintJS @external', () => {
     writeBenchmarkResult('fingerprintjs-3rotations', {
       service: 'FingerprintJS',
       timestamp: new Date().toISOString(),
+      status: 'pass',
       preRotation: { visitorIds: ids },
       postRotation: null,
       sessionStable: true,

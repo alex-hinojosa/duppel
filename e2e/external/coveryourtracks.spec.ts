@@ -2,13 +2,15 @@
  * EFF Cover Your Tracks quantitative benchmark.
  * Runs the fingerprinting test, extracts bits of identifying information,
  * per-surface uniqueness, and tracker blocking status.
+ *
+ * Required metrics are hard assertions — missing extraction is a test
+ * failure, not a skip.
  */
 
 import { test, expect } from '../fixtures/extension';
 import {
   triggerRotation,
   writeBenchmarkResult,
-  waitForSelector,
 } from '../helpers/benchmark-utils';
 
 const CYT_URL = 'https://coveryourtracks.eff.org/';
@@ -21,7 +23,6 @@ interface CYTMetrics {
 
 /**
  * Run the Cover Your Tracks test and extract results.
- * The test requires clicking a button and waiting for results.
  */
 async function runTestAndExtract(page: import('@playwright/test').Page): Promise<CYTMetrics> {
   await page.goto(CYT_URL, {
@@ -29,7 +30,7 @@ async function runTestAndExtract(page: import('@playwright/test').Page): Promise
     timeout: 45_000,
   });
 
-  // Click "Test Your Browser" button — try multiple selectors
+  // Click "Test Your Browser" button
   const buttonClicked = await page.evaluate(() => {
     const buttons = document.querySelectorAll('a, button, input[type="submit"]');
     for (const btn of buttons) {
@@ -39,7 +40,6 @@ async function runTestAndExtract(page: import('@playwright/test').Page): Promise
         return true;
       }
     }
-    // Try the specific known link
     const link = document.querySelector('a[href*="test"]');
     if (link) {
       (link as HTMLElement).click();
@@ -49,14 +49,13 @@ async function runTestAndExtract(page: import('@playwright/test').Page): Promise
   });
 
   if (!buttonClicked) {
-    // Try direct navigation to the test endpoint
     await page.goto('https://coveryourtracks.eff.org/kcarter', {
       waitUntil: 'networkidle',
       timeout: 45_000,
     });
   }
 
-  // Wait for the test to complete — look for results content
+  // Wait for test results
   for (let i = 0; i < 60; i++) {
     const body = await page.textContent('body').catch(() => '');
     if (body && (body.includes('bits of') || body.includes('unique') || body.includes('fingerprint'))) {
@@ -65,20 +64,17 @@ async function runTestAndExtract(page: import('@playwright/test').Page): Promise
     await page.waitForTimeout(1000);
   }
 
-  // Additional settle time for results rendering
   await page.waitForTimeout(3000);
 
   const metrics = await page.evaluate(() => {
     const body = document.body.textContent ?? '';
 
-    // Extract bits of identifying information
     let bitsOfInfo: string | null = null;
     const bitsMatch = body.match(/(\d+(?:\.\d+)?)\s*bits?\s*of\s*(?:identifying\s*)?information/i);
     if (bitsMatch) {
       bitsOfInfo = bitsMatch[1];
     }
 
-    // Tracker blocking result
     let trackerBlocking: string | null = null;
     if (/block.*track/i.test(body) || /track.*block/i.test(body)) {
       if (/does\s+block/i.test(body) || /blocked/i.test(body)) {
@@ -90,7 +86,6 @@ async function runTestAndExtract(page: import('@playwright/test').Page): Promise
       }
     }
 
-    // Per-surface uniqueness — extract from results table if present
     const surfaces: Record<string, string> = {};
     const rows = document.querySelectorAll('tr, .result-row, [class*="result"]');
     for (const row of rows) {
@@ -99,7 +94,6 @@ async function runTestAndExtract(page: import('@playwright/test').Page): Promise
         const label = cells[0].textContent?.trim() ?? '';
         const value = cells[1].textContent?.trim() ?? '';
         if (label && value && label.length < 60) {
-          // Filter for fingerprint-related surfaces
           const lcLabel = label.toLowerCase();
           if (lcLabel.includes('unique') || lcLabel.includes('canvas') ||
               lcLabel.includes('webgl') || lcLabel.includes('audio') ||
@@ -127,16 +121,9 @@ test.describe('Cover Your Tracks @external', () => {
     const metrics = await runTestAndExtract(extensionPage);
     await extensionPage.screenshot({ path: 'test-results/coveryourtracks.png', fullPage: true });
 
-    // We should get at least some data from the test
+    // Required: must extract at least one metric (bits, blocking status, or surfaces)
     const hasData = metrics.bitsOfInfo || metrics.trackerBlocking || Object.keys(metrics.surfaces).length > 0;
-
-    if (!hasData) {
-      // Check if we're on a results page at all
-      const url = extensionPage.url();
-      const bodyLen = (await extensionPage.textContent('body').catch(() => '')).length;
-      test.skip(true, `No extractable data from CYT (URL: ${url}, body length: ${bodyLen})`);
-      return;
-    }
+    expect(hasData, 'Required metric: Cover Your Tracks must produce bits, blocking status, or surface data').toBeTruthy();
 
     if (metrics.bitsOfInfo) {
       const bits = parseFloat(metrics.bitsOfInfo);
@@ -146,6 +133,7 @@ test.describe('Cover Your Tracks @external', () => {
     writeBenchmarkResult('coveryourtracks-results', {
       service: 'Cover Your Tracks',
       timestamp: new Date().toISOString(),
+      status: 'pass',
       preRotation: {
         bitsOfInfo: metrics.bitsOfInfo,
         trackerBlocking: metrics.trackerBlocking,
@@ -164,16 +152,13 @@ test.describe('Cover Your Tracks @external', () => {
     const metrics = await runTestAndExtract(extensionPage);
     await extensionPage.screenshot({ path: 'test-results/coveryourtracks-blocking.png', fullPage: true });
 
-    if (!metrics.trackerBlocking) {
-      test.skip(true, 'Could not determine tracker blocking status');
-      return;
-    }
+    // Required: tracker blocking status must be determinable
+    expect(metrics.trackerBlocking, 'Required metric: tracker blocking status must be extractable').not.toBeNull();
 
-    // Log the result — we don't enforce a specific outcome since it depends
-    // on PhantomGrid's current blocking implementation
     writeBenchmarkResult('coveryourtracks-blocking', {
       service: 'Cover Your Tracks',
       timestamp: new Date().toISOString(),
+      status: 'pass',
       preRotation: {
         trackerBlocking: metrics.trackerBlocking,
       },
@@ -192,15 +177,9 @@ test.describe('Cover Your Tracks @external', () => {
     await prePage.screenshot({ path: 'test-results/coveryourtracks-pre.png', fullPage: true });
     await prePage.close();
 
-    const preData = JSON.stringify({
-      bits: preMetrics.bitsOfInfo,
-      surfaces: preMetrics.surfaces,
-    });
-
-    if (!preMetrics.bitsOfInfo && Object.keys(preMetrics.surfaces).length === 0) {
-      test.skip(true, 'Could not extract pre-rotation metrics');
-      return;
-    }
+    // Required: must get data to compare
+    const preHasData = preMetrics.bitsOfInfo || Object.keys(preMetrics.surfaces).length > 0;
+    expect(preHasData, 'Required metric: pre-rotation CYT data must be extractable').toBeTruthy();
 
     // Rotate
     await triggerRotation(context, extensionId);
@@ -211,18 +190,21 @@ test.describe('Cover Your Tracks @external', () => {
     await postPage.screenshot({ path: 'test-results/coveryourtracks-post.png', fullPage: true });
     await postPage.close();
 
-    const postData = JSON.stringify({
-      bits: postMetrics.bitsOfInfo,
-      surfaces: postMetrics.surfaces,
-    });
+    const postHasData = postMetrics.bitsOfInfo || Object.keys(postMetrics.surfaces).length > 0;
+    expect(postHasData, 'Required metric: post-rotation CYT data must be extractable').toBeTruthy();
 
-    // The composite fingerprint should differ after rotation
-    // (bits value or surface values should change)
+    const preData = JSON.stringify({ bits: preMetrics.bitsOfInfo, surfaces: preMetrics.surfaces });
+    const postData = JSON.stringify({ bits: postMetrics.bitsOfInfo, surfaces: postMetrics.surfaces });
     const changed = preData !== postData;
+
+    if (!changed) {
+      console.warn('WARNING: Cover Your Tracks showed identical results pre/post rotation');
+    }
 
     writeBenchmarkResult('coveryourtracks-rotation', {
       service: 'Cover Your Tracks',
       timestamp: new Date().toISOString(),
+      status: 'pass',
       preRotation: {
         bitsOfInfo: preMetrics.bitsOfInfo,
         surfaceCount: Object.keys(preMetrics.surfaces).length,
@@ -234,10 +216,5 @@ test.describe('Cover Your Tracks @external', () => {
       sessionStable: true,
       rotationChanged: changed,
     });
-
-    // Soft assertion — rotation should change _something_
-    if (!changed) {
-      console.warn('WARNING: Cover Your Tracks showed identical results pre/post rotation');
-    }
   });
 });

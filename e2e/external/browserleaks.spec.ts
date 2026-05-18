@@ -2,6 +2,10 @@
  * BrowserLeaks quantitative benchmark.
  * Extracts canvas hash, WebGL vendor/renderer, navigator properties,
  * and validates session stability + rotation.
+ *
+ * Required metrics are hard assertions — missing extraction is a test
+ * failure, not a skip. If the live service is unreachable, the test
+ * fails with a network error (retries handle transient flakiness).
  */
 
 import { test, expect } from '../fixtures/extension';
@@ -28,7 +32,7 @@ test.describe('BrowserLeaks @external', () => {
     });
     await extensionPage.screenshot({ path: 'test-results/browserleaks-canvas.png' });
 
-    // Extract pre-rotation canvas hash
+    // Extract pre-rotation canvas hash — required metric
     const preHash = await extensionPage.evaluate(() => {
       const rows = document.querySelectorAll('tr');
       for (const row of rows) {
@@ -42,14 +46,10 @@ test.describe('BrowserLeaks @external', () => {
       }
       return null;
     });
-    // Fallback: any long hex string
     const preCanvasHash = preHash ?? await extractByRegex(extensionPage, /([0-9a-f]{32,64})/i);
 
-    if (!preCanvasHash) {
-      test.skip(true, 'Could not extract canvas hash — DOM structure may have changed');
-      return;
-    }
-    expect(preCanvasHash.length).toBeGreaterThan(8);
+    expect(preCanvasHash, 'Required metric: BrowserLeaks canvas hash must be extractable').not.toBeNull();
+    expect(preCanvasHash!.length).toBeGreaterThan(8);
 
     // Trigger rotation
     await triggerRotation(context, extensionId);
@@ -78,14 +78,11 @@ test.describe('BrowserLeaks @external', () => {
     await postPage.screenshot({ path: 'test-results/browserleaks-canvas-post.png' });
     await postPage.close();
 
-    expect(postCanvasHash).not.toBeNull();
+    expect(postCanvasHash, 'Required metric: post-rotation canvas hash must be extractable').not.toBeNull();
 
-    // Record whether rotation changed the hash BrowserLeaks sees.
     // BrowserLeaks may compute its hash from a method that PhantomGrid's
-    // per-page canvas noise doesn't affect (e.g. server-side rendering or
-    // a deterministic probe). Log the outcome as a measurement rather than
-    // a hard assertion — the rotation test suite already validates canvas
-    // rotation via our own collector.
+    // per-page canvas noise doesn't affect. Log the outcome as a measurement —
+    // the rotation test suite validates canvas rotation via our own collector.
     const rotationChanged = preCanvasHash !== postCanvasHash;
     if (!rotationChanged) {
       console.warn('NOTE: BrowserLeaks canvas hash unchanged after rotation — hash may be computed from a surface PhantomGrid does not noise');
@@ -94,6 +91,7 @@ test.describe('BrowserLeaks @external', () => {
     writeBenchmarkResult('browserleaks-canvas', {
       service: 'BrowserLeaks Canvas',
       timestamp: new Date().toISOString(),
+      status: 'pass',
       preRotation: { canvasHash: preCanvasHash },
       postRotation: { canvasHash: postCanvasHash },
       sessionStable: true,
@@ -109,7 +107,7 @@ test.describe('BrowserLeaks @external', () => {
     });
     await extensionPage.screenshot({ path: 'test-results/browserleaks-webgl.png' });
 
-    // Extract vendor and renderer from the WebGL report table
+    // Extract vendor and renderer — required metrics
     const webglInfo = await extensionPage.evaluate(() => {
       const getText = (label: string): string | null => {
         const rows = document.querySelectorAll('tr');
@@ -130,14 +128,8 @@ test.describe('BrowserLeaks @external', () => {
       };
     });
 
-    // Fallback to regex if table extraction fails
-    if (!webglInfo.vendor && !webglInfo.renderer) {
-      const bodyText = await extensionPage.textContent('body').catch(() => '');
-      if (!bodyText) {
-        test.skip(true, 'Could not extract WebGL info — DOM structure may have changed');
-        return;
-      }
-    }
+    const hasWebGL = webglInfo.vendor || webglInfo.renderer;
+    expect(hasWebGL, 'Required metric: BrowserLeaks WebGL vendor or renderer must be extractable').toBeTruthy();
 
     // Should not contain real Snapdragon GPU identifiers
     const combined = `${webglInfo.vendor ?? ''} ${webglInfo.renderer ?? ''}`;
@@ -147,6 +139,7 @@ test.describe('BrowserLeaks @external', () => {
     writeBenchmarkResult('browserleaks-webgl', {
       service: 'BrowserLeaks WebGL',
       timestamp: new Date().toISOString(),
+      status: 'pass',
       preRotation: {
         vendor: webglInfo.vendor,
         renderer: webglInfo.renderer,
@@ -165,7 +158,20 @@ test.describe('BrowserLeaks @external', () => {
     });
     await extensionPage.screenshot({ path: 'test-results/browserleaks-navigator.png' });
 
-    // Extract navigator properties from JS properties table
+    // Extract navigator properties — at minimum the direct JS read must work
+    const localNav = await extensionPage.evaluate(() => ({
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      hardwareConcurrency: navigator.hardwareConcurrency,
+      deviceMemory: (navigator as any).deviceMemory,
+    }));
+
+    // Required: JS-level navigator reads must return spoofed values
+    expect(localNav.userAgent, 'Required metric: userAgent must be present').toBeTruthy();
+    expect(localNav.platform, 'Required metric: platform must be present').toBeTruthy();
+    expect(['Win32', 'MacIntel', 'Linux x86_64']).toContain(localNav.platform);
+
+    // Extract from BrowserLeaks table (supplementary — validates the service sees the same values)
     const navInfo = await extensionPage.evaluate(() => {
       const getText = (label: string): string | null => {
         const rows = document.querySelectorAll('tr');
@@ -183,36 +189,22 @@ test.describe('BrowserLeaks @external', () => {
       return {
         userAgent: getText('useragent') ?? getText('user agent') ?? getText('user-agent'),
         platform: getText('platform'),
-        hardwareConcurrency: getText('hardwareconcurrency') ?? getText('hardware concurrency'),
-        deviceMemory: getText('devicememory') ?? getText('device memory'),
       };
     });
 
-    // Compare with what our own collector sees in the same session
-    const localNav = await extensionPage.evaluate(() => ({
-      userAgent: navigator.userAgent,
-      platform: navigator.platform,
-      hardwareConcurrency: navigator.hardwareConcurrency,
-      deviceMemory: (navigator as any).deviceMemory,
-    }));
-
-    // The BrowserLeaks page should see the same spoofed values as our direct read
     if (navInfo.userAgent) {
       expect(navInfo.userAgent).toContain(localNav.userAgent.substring(0, 30));
-    }
-    // Platform should be one of the known spoofed platforms
-    if (navInfo.platform) {
-      expect(['Win32', 'MacIntel', 'Linux x86_64']).toContain(navInfo.platform);
     }
 
     writeBenchmarkResult('browserleaks-navigator', {
       service: 'BrowserLeaks Navigator',
       timestamp: new Date().toISOString(),
+      status: 'pass',
       preRotation: {
         userAgent: navInfo.userAgent ?? localNav.userAgent,
         platform: navInfo.platform ?? localNav.platform,
-        hardwareConcurrency: navInfo.hardwareConcurrency ?? String(localNav.hardwareConcurrency),
-        deviceMemory: navInfo.deviceMemory ?? String(localNav.deviceMemory),
+        hardwareConcurrency: String(localNav.hardwareConcurrency),
+        deviceMemory: String(localNav.deviceMemory),
       },
       postRotation: null,
       sessionStable: true,
@@ -223,7 +215,6 @@ test.describe('BrowserLeaks @external', () => {
   test('canvas session stability across tabs', async ({ context }) => {
     test.slow();
 
-    // Open canvas page in two separate tabs
     const tab1 = await context.newPage();
     await tab1.goto('https://browserleaks.com/canvas', {
       waitUntil: 'networkidle',
@@ -236,7 +227,6 @@ test.describe('BrowserLeaks @external', () => {
       timeout: 45_000,
     });
 
-    // Extract hash from both tabs
     const extractHash = async (page: typeof tab1) => {
       const hash = await page.evaluate(() => {
         const rows = document.querySelectorAll('tr');
@@ -260,12 +250,11 @@ test.describe('BrowserLeaks @external', () => {
     await tab1.close();
     await tab2.close();
 
-    if (!hash1 || !hash2) {
-      test.skip(true, 'Could not extract canvas hash for stability check');
-      return;
-    }
+    // Required: both hashes must be extractable
+    expect(hash1, 'Required metric: canvas hash from tab 1 must be extractable').not.toBeNull();
+    expect(hash2, 'Required metric: canvas hash from tab 2 must be extractable').not.toBeNull();
 
-    // Same session → same hash
+    // Same session -> same hash
     expect(hash1).toBe(hash2);
   });
 });
