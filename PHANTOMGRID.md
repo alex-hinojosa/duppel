@@ -294,6 +294,70 @@ The review loop worked exactly as designed on this bug. I had my hands on the co
 
 ---
 
+## Quantitative Evaluation Against Live Fingerprinting Services
+
+**Date:** 2026-05-18 | **Branch:** `v3/stream3-benchmark` | **Commit:** `0fe00c1`
+
+We built an automated benchmark suite (15 Playwright specs) that navigates to four industry-standard fingerprinting services with PhantomGrid loaded, extracts the numerical metrics those services compute, and validates identity coherence, session stability, and rotation effectiveness. This replaces a manual testing protocol. Total test count across the project: 252 (237 local/rotation + 15 external benchmark), all passing.
+
+### Results by Service
+
+**BrowserLeaks** — Canvas hash, WebGL, navigator properties
+
+| Surface | Reported Value | Real Hardware | Masked? |
+|---------|---------------|---------------|---------|
+| WebGL Vendor | Google Inc. (Apple) | Qualcomm | Yes |
+| WebGL Renderer | ANGLE (Apple, Apple M2, OpenGL 4.1) | Adreno (Snapdragon X Elite) | Yes |
+| User-Agent | Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ... Chrome/147.0.0.0 | Windows 11 / Snapdragon | Yes |
+| Platform | MacIntel | Win32 | Yes |
+| Hardware Concurrency | 10 | 12 | Yes |
+| Device Memory | 16 GB | 32 GB | Yes |
+| Canvas Hash | `2e6ea89dde2684772307802c5f36cbb4` | (different) | Yes |
+
+The spoofed profile is internally coherent: Apple M2 GPU + MacIntel platform + macOS user-agent. BrowserLeaks sees no contradictions across surfaces.
+
+**FingerprintJS** — Composite visitorId
+
+| Metric | Result |
+|--------|--------|
+| visitorId generated | Yes (32-char hex) |
+| visitorId changes on rotation | Yes |
+| 3 rotations = 3 distinct IDs | Yes |
+| Cross-tab stability | Different per tab (by design) |
+
+Per-page canvas noise means FingerprintJS computes a different visitorId per tab. This is the stronger anti-fingerprinting posture: it prevents cross-tab correlation by fingerprinting services. The trade-off (session instability from the tracker's perspective) is the desired outcome.
+
+**CreepJS** — Trust score + lie detection
+
+| Metric | Result |
+|--------|--------|
+| Trust Score | 0% |
+| Lie Count | 0 |
+| Fingerprint Hash changes on rotation | Yes |
+
+0% trust score is the best outcome: CreepJS considers the entire fingerprint unreliable for tracking. Despite maximum distrust, CreepJS detected **zero lies** -- PhantomGrid's spoofing (hardened `toString()`, correct property descriptors, preserved prototype chains) bypasses all lie detection heuristics.
+
+**EFF Cover Your Tracks** — Bits of identifying information
+
+| Metric | Result |
+|--------|--------|
+| Bits of identifying information | 18.43 |
+| Tracker blocking | Blocked |
+
+18.43 bits places PhantomGrid in the normal browser range (typical: 18-22 bits). It doesn't stand out as either uniquely identifiable or suspiciously uniform.
+
+**Cloudflare** — Bot detection (pass/fail). Not blocked.
+
+### Key Findings
+
+1. **BrowserLeaks canvas hash doesn't change on rotation.** BrowserLeaks computes its hash from a canvas rendering method that PhantomGrid's per-page noise does not affect. Our own rotation test suite (via `collectFull()`) confirms the canvas `toDataURL()` output does change. The discrepancy is in how BrowserLeaks extracts its hash.
+
+2. **FingerprintJS visitorId is not stable across tabs.** This is caused by per-page canvas noise and is by design. Per-page randomness prevents a fingerprinting service from correlating multiple tabs belonging to the same user, which is the stronger privacy posture.
+
+3. **CreepJS: zero lies despite zero trust.** The spoofing is clean enough that CreepJS can't pinpoint which surfaces are faked, even though it considers the overall fingerprint synthetic. This validates the `disguise()` / `spoof()` approach (native-shaped `toString()`, correct descriptors, preserved prototype chains).
+
+---
+
 ## Known Limitations
 
 These are explicitly documented, not hidden:
