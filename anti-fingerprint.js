@@ -1,425 +1,333 @@
-/**
- * PhantomGrid — Anti-Fingerprint Content Script
- * Runs in MAIN world at document_start, before any page script.
- *
- * Architecture (rowan review pass 2, 2026-05-08):
- * - One-way immutable bootstrap. Reads seed from sessionStorage once,
- *   generates profile, applies overrides. NO message bus, NO live updates.
- * - Original function references saved BEFORE wrapping — prevents wrapper
- *   stacking on any future re-application.
- * - Rotation = background.js clears sessionStorage seed + reloads tabs.
- *   Each tab generates a fresh identity on reload.
- * - Cross-origin iframes generate independent seeds. This is an inherent
- *   limitation of the content-script model. The HTTP User-Agent header
- *   still matches (set globally via declarativeNetRequest). JS-level
- *   fingerprints in cross-origin iframes may differ from the top frame.
- *   Fixable only at network level (Phase 2 proxy).
- * - Per-site disable via cookie (__pgd). Set by background.js via
- *   chrome.scripting.executeScript in MAIN world before reload;
- *   checked synchronously here. NOTE: JS-created cookies cannot be
- *   httpOnly, so __pgd IS readable by page JS. The key is generic
- *   but detectable once known. This is a detection risk (reveals
- *   extension presence), not a privacy leak (does not expose real
- *   identity). Known limitation for v1.0.
- */
-
-(function() {
-  "use strict";
-
-  // === Disable check (synchronous, before any overrides) ===
-  // Uses a cookie instead of localStorage to avoid extension-detection
-  // leaks (rowan pass 3: page JS could read localStorage.__pg_off__
-  // to detect PhantomGrid). The cookie key is intentionally generic.
-  try {
-    if (document.cookie.split(";").some(c => c.trim().startsWith("__pgd=1"))) return;
-  } catch(e) {}
-
-  // === Save original function references BEFORE any wrapping ===
-  // Prevents wrapper stacking (rowan pass 2 finding #2): even if this
-  // code ever runs twice, wrappers always delegate to the true originals.
-  const ORIG = {
-    toDataURL: HTMLCanvasElement.prototype.toDataURL,
-    toBlob: HTMLCanvasElement.prototype.toBlob,
-    getImageData: CanvasRenderingContext2D.prototype.getImageData,
-    getTimezoneOffset: Date.prototype.getTimezoneOffset,
-    resolvedOptions: Intl.DateTimeFormat.prototype.resolvedOptions,
-    DateTimeFormat: Intl.DateTimeFormat,
-    // Descriptor/toString hardening originals (v2 item 6)
-    fnToString: Function.prototype.toString,
-    defineProperty: Object.defineProperty,
-    getOwnPropertyDescriptor: Object.getOwnPropertyDescriptor,
-    getOwnPropertyDescriptors: Object.getOwnPropertyDescriptors,
-    reflectGOPD: typeof Reflect !== "undefined" ? Reflect.getOwnPropertyDescriptor : null,
-    promiseResolve: Promise.resolve,
-    freeze: Object.freeze,
+// @generated — built from src/content/anti-fingerprint/ by esbuild. DO NOT EDIT.
+(() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+  var __esm = (fn, res) => function __init() {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
   };
-  if (typeof WebGLRenderingContext !== "undefined") {
-    ORIG.glGetParameter = WebGLRenderingContext.prototype.getParameter;
-    ORIG.glReadPixels = WebGLRenderingContext.prototype.readPixels;
-    ORIG.glGetShaderPrecisionFormat = WebGLRenderingContext.prototype.getShaderPrecisionFormat;
-    ORIG.glGetExtension = WebGLRenderingContext.prototype.getExtension;
-    ORIG.glGetSupportedExtensions = WebGLRenderingContext.prototype.getSupportedExtensions;
-  }
-  if (typeof WebGL2RenderingContext !== "undefined") {
-    ORIG.gl2GetParameter = WebGL2RenderingContext.prototype.getParameter;
-    ORIG.gl2ReadPixels = WebGL2RenderingContext.prototype.readPixels;
-    ORIG.gl2GetShaderPrecisionFormat = WebGL2RenderingContext.prototype.getShaderPrecisionFormat;
-    ORIG.gl2GetExtension = WebGL2RenderingContext.prototype.getExtension;
-    ORIG.gl2GetSupportedExtensions = WebGL2RenderingContext.prototype.getSupportedExtensions;
-  }
-  if (typeof OffscreenCanvas !== "undefined") {
-    ORIG.offscreenConvertToBlob = OffscreenCanvas.prototype.convertToBlob;
-    if (typeof OffscreenCanvasRenderingContext2D !== "undefined") {
-      ORIG.offscreenGetImageData = OffscreenCanvasRenderingContext2D.prototype.getImageData;
-    }
-  }
-  if (typeof AudioBuffer !== "undefined") {
-    ORIG.getChannelData = AudioBuffer.prototype.getChannelData;
-  }
-  if (typeof AudioNode !== "undefined") {
-    ORIG.audioConnect = AudioNode.prototype.connect;
-  }
+  var __commonJS = (cb, mod) => function __require() {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  };
 
-  // === Host browser detection (v3 item 4a) ===
-  // Detect BEFORE any spoofing. Used to filter UA_GROUPS to same-engine
-  // profiles only — prevents cross-engine contradiction fingerprints
-  // (e.g., Chrome TLS + Firefox UA, ANGLE WebGL + native GL strings).
-  const _realUA = navigator.userAgent;
-  const _isFirefox = /Firefox\//.test(_realUA);
-  const _isEdge = /Edg\//.test(_realUA);
-  // Chrome, Edge, Opera, Brave all share Chromium engine (ANGLE WebGL, Client Hints)
-  const _isChromium = !_isFirefox && /Chrome\//.test(_realUA);
-
-  // === Plausible profile combos (correlated GPU/UA groups) ===
-  const UA_GROUPS = [
-    {
-      engine: "chromium",
-      uas: [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-      ],
-      platform: "Win32",
-      gpus: [
-        { vendor: "Google Inc. (Intel)", renderer: "ANGLE (Intel, Intel(R) UHD Graphics 630, OpenGL 4.5)" },
-        { vendor: "Google Inc. (NVIDIA)", renderer: "ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 6GB, OpenGL 4.5)" },
-        { vendor: "Google Inc. (NVIDIA)", renderer: "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060, OpenGL 4.5)" },
-        { vendor: "Google Inc. (NVIDIA)", renderer: "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070, OpenGL 4.5)" },
-        { vendor: "Google Inc. (AMD)", renderer: "ANGLE (AMD, AMD Radeon RX 580, OpenGL 4.5)" },
-        { vendor: "Google Inc. (AMD)", renderer: "ANGLE (AMD, AMD Radeon RX 6700 XT, OpenGL 4.5)" },
-        { vendor: "Google Inc. (Intel)", renderer: "ANGLE (Intel, Intel(R) Iris(R) Xe Graphics, OpenGL 4.5)" },
-        { vendor: "Google Inc. (Intel)", renderer: "ANGLE (Intel, Intel(R) HD Graphics 620, OpenGL 4.5)" },
-      ],
-    },
-    {
-      engine: "chromium",
-      uas: [
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-      ],
-      platform: "MacIntel",
-      gpus: [
-        { vendor: "Google Inc. (Apple)", renderer: "ANGLE (Apple, Apple M1, OpenGL 4.1)" },
-        { vendor: "Google Inc. (Apple)", renderer: "ANGLE (Apple, Apple M2, OpenGL 4.1)" },
-        { vendor: "Google Inc. (Intel)", renderer: "ANGLE (Intel, Intel(R) Iris(R) Plus Graphics, OpenGL 4.1)" },
-      ],
-    },
-    {
-      engine: "firefox",
-      uas: [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:139.0) Gecko/20100101 Firefox/139.0",
-      ],
-      platform: "Win32",
-      gpus: [
-        { vendor: "Intel", renderer: "Intel(R) UHD Graphics 630" },
-        { vendor: "NVIDIA Corporation", renderer: "NVIDIA GeForce GTX 1060 6GB/PCIe/SSE2" },
-        { vendor: "NVIDIA Corporation", renderer: "NVIDIA GeForce RTX 3060/PCIe/SSE2" },
-        { vendor: "ATI Technologies Inc.", renderer: "AMD Radeon RX 580" },
-        { vendor: "Intel", renderer: "Intel(R) Iris(R) Xe Graphics" },
-      ],
-    },
-    {
-      engine: "firefox",
-      uas: [
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:140.0) Gecko/20100101 Firefox/140.0",
-      ],
-      platform: "MacIntel",
-      gpus: [
-        { vendor: "Apple", renderer: "Apple M1" },
-        { vendor: "Apple", renderer: "Apple M2" },
-        { vendor: "Intel Inc.", renderer: "Intel(R) Iris(R) Plus Graphics" },
-      ],
-    },
-    {
-      engine: "chromium",
-      uas: [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0",
-      ],
-      platform: "Win32",
-      gpus: [
-        { vendor: "Google Inc. (Intel)", renderer: "ANGLE (Intel, Intel(R) UHD Graphics 630, OpenGL 4.5)" },
-        { vendor: "Google Inc. (NVIDIA)", renderer: "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060, OpenGL 4.5)" },
-        { vendor: "Google Inc. (NVIDIA)", renderer: "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070, OpenGL 4.5)" },
-        { vendor: "Google Inc. (Intel)", renderer: "ANGLE (Intel, Intel(R) Iris(R) Xe Graphics, OpenGL 4.5)" },
-      ],
-    },
-    {
-      engine: "chromium",
-      uas: [
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-      ],
-      platform: "Linux x86_64",
-      gpus: [
-        { vendor: "Google Inc. (Intel)", renderer: "ANGLE (Intel, Intel(R) UHD Graphics 630, OpenGL 4.5)" },
-        { vendor: "Google Inc. (NVIDIA)", renderer: "ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 6GB, OpenGL 4.5)" },
-        { vendor: "Google Inc. (AMD)", renderer: "ANGLE (AMD, AMD Radeon RX 580, OpenGL 4.5)" },
-      ],
-    },
-  ];
-
-  const SCREENS = [
-    { width: 1920, height: 1080, avail: 1040 },
-    { width: 2560, height: 1440, avail: 1400 },
-    { width: 1366, height: 768,  avail: 728  },
-    { width: 1536, height: 864,  avail: 824  },
-    { width: 1440, height: 900,  avail: 860  },
-    { width: 1680, height: 1050, avail: 1010 },
-    { width: 3840, height: 2160, avail: 2120 },
-    { width: 1280, height: 720,  avail: 680  },
-    { width: 1600, height: 900,  avail: 860  },
-  ];
-  const CORES = [2, 4, 6, 8, 10, 12, 16];
-  const MEMORY = [4, 8, 8, 8, 16, 16, 32];
-  const COLOR_DEPTHS = [24, 24, 24, 32];
-  const LANGUAGES = [
-    ["en-US", "en"], ["en-US", "en", "es"], ["en-GB", "en"],
-    ["en-US"], ["en-US", "en", "fr"], ["en-US", "en", "de"],
-  ];
-  const TIMEZONES = [
-    "America/New_York", "America/Chicago", "America/Denver",
-    "America/Los_Angeles", "America/Phoenix",
-    "Europe/London", "Europe/Berlin", "America/Toronto",
-  ];
-
-  // Seeded PRNG
-  function mulberry32(seed) {
-    return function() {
-      seed |= 0; seed = seed + 0x6D2B79F5 | 0;
-      let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
-      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-      return ((t ^ t >>> 14) >>> 0) / 4294967296;
-    };
-  }
-
-  function pickFrom(arr, rng) {
-    return arr[Math.floor(rng() * arr.length)];
-  }
-
-  // Filter UA_GROUPS to same-engine profiles (v3 item 4a).
-  // Chromium hosts get chromium profiles (Chrome + Edge + Linux Chrome).
-  // Firefox hosts get firefox profiles only. Prevents TLS/rendering
-  // contradiction fingerprints.
-  const _hostEngine = _isFirefox ? "firefox" : "chromium";
-  const UA_GROUPS_FILTERED = UA_GROUPS.filter(g => g.engine === _hostEngine);
-
-  function generateProfile(seed) {
-    const rng = mulberry32(seed);
-    const group = pickFrom(UA_GROUPS_FILTERED.length > 0 ? UA_GROUPS_FILTERED : UA_GROUPS, rng);
-    const ua = pickFrom(group.uas, rng);
-    const gpu = pickFrom(group.gpus, rng);
-    return {
-      userAgent: ua,
-      platform: group.platform,
-      hardwareConcurrency: pickFrom(CORES, rng),
-      deviceMemory: pickFrom(MEMORY, rng),
-      screen: pickFrom(SCREENS, rng),
-      colorDepth: pickFrom(COLOR_DEPTHS, rng),
-      gpu: gpu,
-      languages: pickFrom(LANGUAGES, rng),
-      timezone: pickFrom(TIMEZONES, rng),
-      canvasSeed: (rng() * 0xFFFFFFFF) >>> 0,
-      audioSeed: (rng() * 0xFFFFFFFF) >>> 0,
-    };
-  }
-
-  // === DST-aware timezone offset ===
-  // Uses the REAL Intl.DateTimeFormat (saved in ORIG) before we proxy it.
-  function getTimezoneOffset(tz) {
+  // src/content/anti-fingerprint/core.js
+  function createContext() {
     try {
-      const now = new Date();
-      const fmt = new ORIG.DateTimeFormat("en-US", {
-        timeZone: tz, timeZoneName: "shortOffset",
-      });
-      const parts = fmt.formatToParts(now);
-      const tzPart = parts.find(p => p.type === "timeZoneName");
-      if (tzPart) {
-        const match = tzPart.value.match(/GMT([+-]?\d+)?(?::(\d+))?/);
-        if (match) {
-          const hours = parseInt(match[1] || "0", 10);
-          const minutes = parseInt(match[2] || "0", 10);
-          return -(hours * 60 + (hours < 0 ? -minutes : minutes));
-        }
-      }
-    } catch(e) {}
-    const fallback = {
-      "America/New_York": 300, "America/Chicago": 360, "America/Denver": 420,
-      "America/Los_Angeles": 480, "America/Phoenix": 420,
-      "Europe/London": 0, "Europe/Berlin": -60, "America/Toronto": 300,
+      if (document.cookie.split(";").some((c) => c.trim().startsWith("__pgd=1"))) return null;
+    } catch (e) {
+    }
+    const ORIG = {
+      toDataURL: HTMLCanvasElement.prototype.toDataURL,
+      toBlob: HTMLCanvasElement.prototype.toBlob,
+      getImageData: CanvasRenderingContext2D.prototype.getImageData,
+      getTimezoneOffset: Date.prototype.getTimezoneOffset,
+      resolvedOptions: Intl.DateTimeFormat.prototype.resolvedOptions,
+      DateTimeFormat: Intl.DateTimeFormat,
+      // Descriptor/toString hardening originals (v2 item 6)
+      fnToString: Function.prototype.toString,
+      defineProperty: Object.defineProperty,
+      getOwnPropertyDescriptor: Object.getOwnPropertyDescriptor,
+      getOwnPropertyDescriptors: Object.getOwnPropertyDescriptors,
+      reflectGOPD: typeof Reflect !== "undefined" ? Reflect.getOwnPropertyDescriptor : null,
+      promiseResolve: Promise.resolve,
+      freeze: Object.freeze
     };
-    return fallback[tz] || 300;
-  }
-
-  // === Session seed ===
-  // Background.js pre-injects the session seed via chrome.tabs.onUpdated +
-  // injectImmediately (Item 2). If the pre-injection won the race, __pg_seed__
-  // is already set below. If not (race lost or first-ever cold start), a random
-  // seed is generated — bridge.js detects the desync and background silently
-  // corrects sessionStorage for future same-origin navigations (no reload).
-  let sessionSeed;
-  try {
-    // Iframes: try to inherit parent seed (same-origin only)
-    if (window !== window.top) {
+    if (typeof WebGLRenderingContext !== "undefined") {
+      ORIG.glGetParameter = WebGLRenderingContext.prototype.getParameter;
+      ORIG.glReadPixels = WebGLRenderingContext.prototype.readPixels;
+      ORIG.glGetShaderPrecisionFormat = WebGLRenderingContext.prototype.getShaderPrecisionFormat;
+      ORIG.glGetExtension = WebGLRenderingContext.prototype.getExtension;
+      ORIG.glGetSupportedExtensions = WebGLRenderingContext.prototype.getSupportedExtensions;
+    }
+    if (typeof WebGL2RenderingContext !== "undefined") {
+      ORIG.gl2GetParameter = WebGL2RenderingContext.prototype.getParameter;
+      ORIG.gl2ReadPixels = WebGL2RenderingContext.prototype.readPixels;
+      ORIG.gl2GetShaderPrecisionFormat = WebGL2RenderingContext.prototype.getShaderPrecisionFormat;
+      ORIG.gl2GetExtension = WebGL2RenderingContext.prototype.getExtension;
+      ORIG.gl2GetSupportedExtensions = WebGL2RenderingContext.prototype.getSupportedExtensions;
+    }
+    if (typeof OffscreenCanvas !== "undefined") {
+      ORIG.offscreenConvertToBlob = OffscreenCanvas.prototype.convertToBlob;
+      if (typeof OffscreenCanvasRenderingContext2D !== "undefined") {
+        ORIG.offscreenGetImageData = OffscreenCanvasRenderingContext2D.prototype.getImageData;
+      }
+    }
+    if (typeof AudioBuffer !== "undefined") {
+      ORIG.getChannelData = AudioBuffer.prototype.getChannelData;
+    }
+    if (typeof AudioNode !== "undefined") {
+      ORIG.audioConnect = AudioNode.prototype.connect;
+    }
+    const _realUA = navigator.userAgent;
+    const _isFirefox = /Firefox\//.test(_realUA);
+    const _isEdge = /Edg\//.test(_realUA);
+    const _isChromium = !_isFirefox && /Chrome\//.test(_realUA);
+    const UA_GROUPS = [
+      {
+        engine: "chromium",
+        uas: [
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+        ],
+        platform: "Win32",
+        gpus: [
+          { vendor: "Google Inc. (Intel)", renderer: "ANGLE (Intel, Intel(R) UHD Graphics 630, OpenGL 4.5)" },
+          { vendor: "Google Inc. (NVIDIA)", renderer: "ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 6GB, OpenGL 4.5)" },
+          { vendor: "Google Inc. (NVIDIA)", renderer: "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060, OpenGL 4.5)" },
+          { vendor: "Google Inc. (NVIDIA)", renderer: "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070, OpenGL 4.5)" },
+          { vendor: "Google Inc. (AMD)", renderer: "ANGLE (AMD, AMD Radeon RX 580, OpenGL 4.5)" },
+          { vendor: "Google Inc. (AMD)", renderer: "ANGLE (AMD, AMD Radeon RX 6700 XT, OpenGL 4.5)" },
+          { vendor: "Google Inc. (Intel)", renderer: "ANGLE (Intel, Intel(R) Iris(R) Xe Graphics, OpenGL 4.5)" },
+          { vendor: "Google Inc. (Intel)", renderer: "ANGLE (Intel, Intel(R) HD Graphics 620, OpenGL 4.5)" }
+        ]
+      },
+      {
+        engine: "chromium",
+        uas: [
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+        ],
+        platform: "MacIntel",
+        gpus: [
+          { vendor: "Google Inc. (Apple)", renderer: "ANGLE (Apple, Apple M1, OpenGL 4.1)" },
+          { vendor: "Google Inc. (Apple)", renderer: "ANGLE (Apple, Apple M2, OpenGL 4.1)" },
+          { vendor: "Google Inc. (Intel)", renderer: "ANGLE (Intel, Intel(R) Iris(R) Plus Graphics, OpenGL 4.1)" }
+        ]
+      },
+      {
+        engine: "firefox",
+        uas: [
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:139.0) Gecko/20100101 Firefox/139.0"
+        ],
+        platform: "Win32",
+        gpus: [
+          { vendor: "Intel", renderer: "Intel(R) UHD Graphics 630" },
+          { vendor: "NVIDIA Corporation", renderer: "NVIDIA GeForce GTX 1060 6GB/PCIe/SSE2" },
+          { vendor: "NVIDIA Corporation", renderer: "NVIDIA GeForce RTX 3060/PCIe/SSE2" },
+          { vendor: "ATI Technologies Inc.", renderer: "AMD Radeon RX 580" },
+          { vendor: "Intel", renderer: "Intel(R) Iris(R) Xe Graphics" }
+        ]
+      },
+      {
+        engine: "firefox",
+        uas: [
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:140.0) Gecko/20100101 Firefox/140.0"
+        ],
+        platform: "MacIntel",
+        gpus: [
+          { vendor: "Apple", renderer: "Apple M1" },
+          { vendor: "Apple", renderer: "Apple M2" },
+          { vendor: "Intel Inc.", renderer: "Intel(R) Iris(R) Plus Graphics" }
+        ]
+      },
+      {
+        engine: "chromium",
+        uas: [
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0"
+        ],
+        platform: "Win32",
+        gpus: [
+          { vendor: "Google Inc. (Intel)", renderer: "ANGLE (Intel, Intel(R) UHD Graphics 630, OpenGL 4.5)" },
+          { vendor: "Google Inc. (NVIDIA)", renderer: "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060, OpenGL 4.5)" },
+          { vendor: "Google Inc. (NVIDIA)", renderer: "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070, OpenGL 4.5)" },
+          { vendor: "Google Inc. (Intel)", renderer: "ANGLE (Intel, Intel(R) Iris(R) Xe Graphics, OpenGL 4.5)" }
+        ]
+      },
+      {
+        engine: "chromium",
+        uas: [
+          "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
+        ],
+        platform: "Linux x86_64",
+        gpus: [
+          { vendor: "Google Inc. (Intel)", renderer: "ANGLE (Intel, Intel(R) UHD Graphics 630, OpenGL 4.5)" },
+          { vendor: "Google Inc. (NVIDIA)", renderer: "ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 6GB, OpenGL 4.5)" },
+          { vendor: "Google Inc. (AMD)", renderer: "ANGLE (AMD, AMD Radeon RX 580, OpenGL 4.5)" }
+        ]
+      }
+    ];
+    const SCREENS = [
+      { width: 1920, height: 1080, avail: 1040 },
+      { width: 2560, height: 1440, avail: 1400 },
+      { width: 1366, height: 768, avail: 728 },
+      { width: 1536, height: 864, avail: 824 },
+      { width: 1440, height: 900, avail: 860 },
+      { width: 1680, height: 1050, avail: 1010 },
+      { width: 3840, height: 2160, avail: 2120 },
+      { width: 1280, height: 720, avail: 680 },
+      { width: 1600, height: 900, avail: 860 }
+    ];
+    const CORES = [2, 4, 6, 8, 10, 12, 16];
+    const MEMORY = [4, 8, 8, 8, 16, 16, 32];
+    const COLOR_DEPTHS = [24, 24, 24, 32];
+    const LANGUAGES = [
+      ["en-US", "en"],
+      ["en-US", "en", "es"],
+      ["en-GB", "en"],
+      ["en-US"],
+      ["en-US", "en", "fr"],
+      ["en-US", "en", "de"]
+    ];
+    const TIMEZONES = [
+      "America/New_York",
+      "America/Chicago",
+      "America/Denver",
+      "America/Los_Angeles",
+      "America/Phoenix",
+      "Europe/London",
+      "Europe/Berlin",
+      "America/Toronto"
+    ];
+    function mulberry32(seed) {
+      return function() {
+        seed |= 0;
+        seed = seed + 1831565813 | 0;
+        let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+      };
+    }
+    __name(mulberry32, "mulberry32");
+    function pickFrom(arr, rng) {
+      return arr[Math.floor(rng() * arr.length)];
+    }
+    __name(pickFrom, "pickFrom");
+    const _hostEngine = _isFirefox ? "firefox" : "chromium";
+    const UA_GROUPS_FILTERED = UA_GROUPS.filter((g) => g.engine === _hostEngine);
+    function generateProfile(seed) {
+      const rng = mulberry32(seed);
+      const group = pickFrom(UA_GROUPS_FILTERED.length > 0 ? UA_GROUPS_FILTERED : UA_GROUPS, rng);
+      const ua = pickFrom(group.uas, rng);
+      const gpu = pickFrom(group.gpus, rng);
+      return {
+        userAgent: ua,
+        platform: group.platform,
+        hardwareConcurrency: pickFrom(CORES, rng),
+        deviceMemory: pickFrom(MEMORY, rng),
+        screen: pickFrom(SCREENS, rng),
+        colorDepth: pickFrom(COLOR_DEPTHS, rng),
+        gpu,
+        languages: pickFrom(LANGUAGES, rng),
+        timezone: pickFrom(TIMEZONES, rng),
+        canvasSeed: rng() * 4294967295 >>> 0,
+        audioSeed: rng() * 4294967295 >>> 0
+      };
+    }
+    __name(generateProfile, "generateProfile");
+    function getTimezoneOffset(tz) {
       try {
-        const parentSeed = window.top.sessionStorage.getItem("__pg_seed__");
-        if (parentSeed) sessionSeed = parseInt(parentSeed, 10);
-      } catch(e) {
-        // Cross-origin iframe — inherent limitation, generates own seed
-      }
-    }
-    if (!sessionSeed) {
-      const stored = sessionStorage.getItem("__pg_seed__");
-      if (stored) {
-        sessionSeed = parseInt(stored, 10);
-      } else {
-        sessionSeed = Date.now() ^ (crypto.getRandomValues(new Uint32Array(1))[0]);
-        sessionStorage.setItem("__pg_seed__", String(sessionSeed));
-      }
-    }
-  } catch(e) {
-    sessionSeed = Date.now() ^ (crypto.getRandomValues(new Uint32Array(1))[0]);
-  }
-
-  const profile = generateProfile(sessionSeed);
-  const bioSeed = (profile.canvasSeed ^ 0x42494F4D) >>> 0; // biometric noise seed
-
-  // Compute DST-aware offset BEFORE we proxy Intl.DateTimeFormat
-  const currentTzOffset = getTimezoneOffset(profile.timezone);
-
-  // === toString / descriptor hardening infrastructure (v2 item 6) ===
-  // WeakMap-based toString: disguised functions don't carry an own toString
-  // property (detectable via hasOwnProperty / in / getOwnPropertyDescriptor).
-  // Instead, Function.prototype.toString is overridden once to check the
-  // WeakMap before delegating to the real toString.
-  const _nativeStrings = new WeakMap();
-
-  // Registry of spoofed (obj, prop) → original descriptor, so GOPD/GOPDs
-  // can return native-shaped descriptors for overridden properties.
-  // Key is `obj`, value is Map<prop, originalDescriptor>.
-  const _spoofedProps = new WeakMap();
-
-  // Override Function.prototype.toString FIRST — before any disguise() call.
-  ORIG.defineProperty.call(Object, Function.prototype, "toString", {
-    value: function toString() {
-      const fake = _nativeStrings.get(this);
-      if (fake !== undefined) return fake;
-      return ORIG.fnToString.call(this);
-    },
-    writable: true, configurable: true, enumerable: false,
-  });
-  // The toString override itself must look native
-  _nativeStrings.set(Function.prototype.toString, "function toString() { [native code] }");
-
-  // === Helper: make a wrapper look native (hardened) ===
-  // Registers the function in the WeakMap. Does NOT set own toString/
-  // toLocaleString properties — those are the primary detection vectors.
-  // Sets function name and length to match the native original.
-  // Third argument `expectedLength` overrides fn.length when the wrapper
-  // uses rest args (...args) which sets length to 0.
-  function disguise(fn, name, expectedLength) {
-    _nativeStrings.set(fn, `function ${name}() { [native code] }`);
-    try {
-      ORIG.defineProperty.call(Object, fn, "name", {
-        value: name, configurable: true,
-      });
-      ORIG.defineProperty.call(Object, fn, "length", {
-        value: expectedLength !== undefined ? expectedLength : fn.length,
-        configurable: true,
-      });
-    } catch(e) {}
-    return fn;
-  }
-
-  // === Helper: override a property on a prototype (hardened) ===
-  // Saves the pristine descriptor so GOPD can normalize flags.
-  // Sets getter.name to "get propName" (matches native getter naming).
-  // Uses pristine descriptor flags for configurable/enumerable.
-  function spoof(obj, prop, getter) {
-    try {
-      // Save pristine descriptor before overwrite
-      const origDesc = ORIG.getOwnPropertyDescriptor.call(Object, obj, prop);
-      if (!_spoofedProps.has(obj)) _spoofedProps.set(obj, new Map());
-      _spoofedProps.get(obj).set(prop, origDesc || null);
-
-      // Disguise the getter: native toString + native-shaped name
-      _nativeStrings.set(getter, `function get ${prop}() { [native code] }`);
-      try {
-        ORIG.defineProperty.call(Object, getter, "name", {
-          value: "get " + prop, configurable: true,
+        const now = /* @__PURE__ */ new Date();
+        const fmt = new ORIG.DateTimeFormat("en-US", {
+          timeZone: tz,
+          timeZoneName: "shortOffset"
         });
-      } catch(e) {}
-
-      // Preserve pristine descriptor flags
-      const configurable = origDesc ? origDesc.configurable !== false : true;
-      const enumerable = origDesc ? origDesc.enumerable !== false : true;
-
-      ORIG.defineProperty.call(Object, obj, prop, {
-        get: getter, configurable: configurable, enumerable: enumerable,
-      });
-    } catch(e) {}
-  }
-
-  // === Descriptor hardening: GOPD / GOPDs / Reflect.getOwnPropertyDescriptor ===
-  // Fingerprinters call GOPD on spoofed properties and inspect the getter's
-  // toString, name, prototype presence, or descriptor shape. We intercept
-  // GOPD to normalize descriptor flags against the pristine baseline from
-  // _spoofedProps, ensuring configurable/enumerable match the original.
-  Object.getOwnPropertyDescriptor = disguise(function getOwnPropertyDescriptor(obj, prop) {
-    const desc = ORIG.getOwnPropertyDescriptor.call(Object, obj, prop);
-    if (!desc || !desc.get) return desc;
-
-    // Normalize descriptor flags against pristine baseline
-    const spoofed = _spoofedProps.get(obj);
-    if (spoofed && spoofed.has(prop)) {
-      const pristine = spoofed.get(prop);
-      if (pristine) {
-        desc.configurable = pristine.configurable;
-        desc.enumerable = pristine.enumerable;
+        const parts = fmt.formatToParts(now);
+        const tzPart = parts.find((p) => p.type === "timeZoneName");
+        if (tzPart) {
+          const match = tzPart.value.match(/GMT([+-]?\d+)?(?::(\d+))?/);
+          if (match) {
+            const hours = parseInt(match[1] || "0", 10);
+            const minutes = parseInt(match[2] || "0", 10);
+            return -(hours * 60 + (hours < 0 ? -minutes : minutes));
+          }
+        }
+      } catch (e) {
       }
+      const fallback = {
+        "America/New_York": 300,
+        "America/Chicago": 360,
+        "America/Denver": 420,
+        "America/Los_Angeles": 480,
+        "America/Phoenix": 420,
+        "Europe/London": 0,
+        "Europe/Berlin": -60,
+        "America/Toronto": 300
+      };
+      return fallback[tz] || 300;
     }
-    return desc;
-  }, "getOwnPropertyDescriptor");
-
-  Object.getOwnPropertyDescriptors = disguise(function getOwnPropertyDescriptors(obj) {
-    const descs = ORIG.getOwnPropertyDescriptors.call(Object, obj);
-    // Normalize any spoofed property descriptors
-    const spoofed = _spoofedProps.get(obj);
-    if (spoofed) {
-      for (const [prop, pristine] of spoofed) {
-        if (descs[prop] && descs[prop].get && pristine) {
-          descs[prop].configurable = pristine.configurable;
-          descs[prop].enumerable = pristine.enumerable;
+    __name(getTimezoneOffset, "getTimezoneOffset");
+    let sessionSeed;
+    try {
+      if (window !== window.top) {
+        try {
+          const parentSeed = window.top.sessionStorage.getItem("__pg_seed__");
+          if (parentSeed) sessionSeed = parseInt(parentSeed, 10);
+        } catch (e) {
         }
       }
+      if (!sessionSeed) {
+        const stored = sessionStorage.getItem("__pg_seed__");
+        if (stored) {
+          sessionSeed = parseInt(stored, 10);
+        } else {
+          sessionSeed = Date.now() ^ crypto.getRandomValues(new Uint32Array(1))[0];
+          sessionStorage.setItem("__pg_seed__", String(sessionSeed));
+        }
+      }
+    } catch (e) {
+      sessionSeed = Date.now() ^ crypto.getRandomValues(new Uint32Array(1))[0];
     }
-    return descs;
-  }, "getOwnPropertyDescriptors");
-
-  if (ORIG.reflectGOPD) {
-    Reflect.getOwnPropertyDescriptor = disguise(function getOwnPropertyDescriptor(target, prop) {
-      const desc = ORIG.reflectGOPD.call(Reflect, target, prop);
+    const profile = generateProfile(sessionSeed);
+    const bioSeed = (profile.canvasSeed ^ 1112100685) >>> 0;
+    const currentTzOffset = getTimezoneOffset(profile.timezone);
+    const _nativeStrings = /* @__PURE__ */ new WeakMap();
+    const _spoofedProps = /* @__PURE__ */ new WeakMap();
+    ORIG.defineProperty.call(Object, Function.prototype, "toString", {
+      value: /* @__PURE__ */ __name(function toString() {
+        const fake = _nativeStrings.get(this);
+        if (fake !== void 0) return fake;
+        return ORIG.fnToString.call(this);
+      }, "toString"),
+      writable: true,
+      configurable: true,
+      enumerable: false
+    });
+    _nativeStrings.set(Function.prototype.toString, "function toString() { [native code] }");
+    function disguise(fn, name, expectedLength) {
+      _nativeStrings.set(fn, `function ${name}() { [native code] }`);
+      try {
+        ORIG.defineProperty.call(Object, fn, "name", {
+          value: name,
+          configurable: true
+        });
+        ORIG.defineProperty.call(Object, fn, "length", {
+          value: expectedLength !== void 0 ? expectedLength : fn.length,
+          configurable: true
+        });
+      } catch (e) {
+      }
+      return fn;
+    }
+    __name(disguise, "disguise");
+    function spoof(obj, prop, getter) {
+      try {
+        const origDesc = ORIG.getOwnPropertyDescriptor.call(Object, obj, prop);
+        if (!_spoofedProps.has(obj)) _spoofedProps.set(obj, /* @__PURE__ */ new Map());
+        _spoofedProps.get(obj).set(prop, origDesc || null);
+        _nativeStrings.set(getter, `function get ${prop}() { [native code] }`);
+        try {
+          ORIG.defineProperty.call(Object, getter, "name", {
+            value: "get " + prop,
+            configurable: true
+          });
+        } catch (e) {
+        }
+        const configurable = origDesc ? origDesc.configurable !== false : true;
+        const enumerable = origDesc ? origDesc.enumerable !== false : true;
+        ORIG.defineProperty.call(Object, obj, prop, {
+          get: getter,
+          configurable,
+          enumerable
+        });
+      } catch (e) {
+      }
+    }
+    __name(spoof, "spoof");
+    Object.getOwnPropertyDescriptor = disguise(/* @__PURE__ */ __name(function getOwnPropertyDescriptor(obj, prop) {
+      const desc = ORIG.getOwnPropertyDescriptor.call(Object, obj, prop);
       if (!desc || !desc.get) return desc;
-
-      const spoofed = _spoofedProps.get(target);
+      const spoofed = _spoofedProps.get(obj);
       if (spoofed && spoofed.has(prop)) {
         const pristine = spoofed.get(prop);
         if (pristine) {
@@ -428,1284 +336,1207 @@
         }
       }
       return desc;
-    }, "getOwnPropertyDescriptor");
-  }
-
-  // === Navigator spoofing ===
-  spoof(Navigator.prototype, "userAgent", () => profile.userAgent);
-  spoof(Navigator.prototype, "platform", () => profile.platform);
-  spoof(Navigator.prototype, "hardwareConcurrency", () => profile.hardwareConcurrency);
-  spoof(Navigator.prototype, "deviceMemory", () => profile.deviceMemory);
-  spoof(Navigator.prototype, "languages", () => Object.freeze([...profile.languages]));
-  spoof(Navigator.prototype, "language", () => profile.languages[0]);
-  spoof(Navigator.prototype, "webdriver", () => false);
-
-  spoof(Navigator.prototype, "vendor", () => profile.userAgent.includes("Firefox") ? "" : "Google Inc.");
-  spoof(Navigator.prototype, "appVersion", () => profile.userAgent.replace("Mozilla/", ""));
-
-  // maxTouchPoints — desktop = 0, prevents Surface Pro touch leak
-  spoof(Navigator.prototype, "maxTouchPoints", () => 0);
-
-  // Global Privacy Control — always true, consistent with Sec-GPC header (v2 item 7)
-  spoof(Navigator.prototype, "globalPrivacyControl", () => true);
-
-  // Cross-origin referrer trimming (v2 item 9)
-  const _origReferrer = document.referrer;
-  spoof(Document.prototype, "referrer", () => {
-    if (!_origReferrer) return '';
-    try {
-      const refOrigin = new URL(_origReferrer).origin;
-      const curOrigin = location.origin;
-      if (refOrigin === curOrigin) return _origReferrer;
-      return refOrigin + '/';
-    } catch(e) {
-      return _origReferrer;
-    }
-  });
-
-  // Network Information API — hide real connection type
-  try {
-    if (navigator.connection) {
-      spoof(Navigator.prototype, "connection", () => undefined);
-    }
-  } catch(e) {}
-
-  // === Client Hints (navigator.userAgentData) ===
-  const chromeMatch = profile.userAgent.match(/Chrome\/(\d+)/);
-  const edgeMatch = profile.userAgent.match(/Edg\/(\d+)/);
-
-  if (chromeMatch && typeof NavigatorUAData !== "undefined") {
-    const chromeVer = chromeMatch[1];
-    const isEdge = !!edgeMatch;
-    const brands = isEdge
-      ? [{ brand: "Microsoft Edge", version: edgeMatch[1] }, { brand: "Chromium", version: chromeVer }, { brand: "Not.A/Brand", version: "8" }]
-      : [{ brand: "Google Chrome", version: chromeVer }, { brand: "Chromium", version: chromeVer }, { brand: "Not.A/Brand", version: "8" }];
-    const isMac = profile.platform === "MacIntel";
-    const isLinux = profile.platform.startsWith("Linux");
-    const uaPlatform = isMac ? "macOS" : isLinux ? "Linux" : "Windows";
-
-    // Apple Silicon GPUs → ARM architecture (rowan pass 3: UA-CH consistency)
-    const isAppleSilicon = profile.gpu.renderer.includes("Apple M");
-    const arch = isAppleSilicon ? "arm" : "x86";
-
-    const fakeUAData = {
-      brands, mobile: false, platform: uaPlatform,
-      toJSON() { return { brands: this.brands, mobile: this.mobile, platform: this.platform }; },
-      getHighEntropyValues() {
-        return Promise.resolve({
-          brands, mobile: false, platform: uaPlatform,
-          platformVersion: isMac ? "15.5.0" : isLinux ? "6.8.0" : "15.0.0",
-          architecture: arch, bitness: "64", model: "",
-          uaFullVersion: `${chromeVer}.0.0.0`,
-          fullVersionList: brands.map(b => ({ brand: b.brand, version: `${b.version}.0.0.0` })),
-          wow64: false,
-        });
-      },
-    };
-    disguise(fakeUAData.getHighEntropyValues, "getHighEntropyValues");
-    disguise(fakeUAData.toJSON, "toJSON");
-    spoof(Navigator.prototype, "userAgentData", () => fakeUAData);
-  }
-
-  if (profile.userAgent.includes("Firefox") && !chromeMatch) {
-    spoof(Navigator.prototype, "userAgentData", () => undefined);
-  }
-
-  // === Screen spoofing ===
-  spoof(Screen.prototype, "width", () => profile.screen.width);
-  spoof(Screen.prototype, "height", () => profile.screen.height);
-  spoof(Screen.prototype, "availWidth", () => profile.screen.width);
-  spoof(Screen.prototype, "availHeight", () => profile.screen.avail);
-  spoof(Screen.prototype, "colorDepth", () => profile.colorDepth);
-  spoof(Screen.prototype, "pixelDepth", () => profile.colorDepth);
-
-  // === Screen position spoofing ===
-  // window.screenX/screenY and screen.availLeft/availTop leak the browser
-  // window's absolute position on the physical display. On multi-monitor
-  // setups this is nearly unique (ratio <0.00001 on AmIUnique). Spoof to 0
-  // (single-monitor primary position) for all profiles.
-  spoof(Screen.prototype, "availLeft", () => 0);
-  spoof(Screen.prototype, "availTop", () => 0);
-  spoof(window, "screenX", () => 0);
-  spoof(window, "screenY", () => 0);
-  spoof(window, "screenLeft", () => 0);
-  spoof(window, "screenTop", () => 0);
-
-  const browserChrome = 80 + Math.floor(mulberry32(profile.canvasSeed)() * 40);
-  const innerW = profile.screen.width;
-  const innerH = profile.screen.height - browserChrome;
-  spoof(window, "innerWidth", () => innerW);
-  spoof(window, "innerHeight", () => innerH);
-  spoof(window, "outerWidth", () => profile.screen.width);
-  spoof(window, "outerHeight", () => profile.screen.height);
-
-  // === devicePixelRatio (rowan pass 3: CSS/display surface consistency) ===
-  // 4K (3840x2160) typically runs at 2x DPR. Everything else: 1.
-  const spoofedDPR = profile.screen.width >= 3840 ? 2 : 1;
-  spoof(window, "devicePixelRatio", () => spoofedDPR);
-
-  // === visualViewport (rowan pass 3) ===
-  // Must align with spoofed innerWidth/innerHeight to avoid desync detection.
-  if (typeof VisualViewport !== "undefined" && window.visualViewport) {
-    spoof(window.visualViewport, "width", () => innerW);
-    spoof(window.visualViewport, "height", () => innerH);
-    spoof(window.visualViewport, "scale", () => 1);
-  }
-
-  // === matchMedia evaluator (v1.1, revised per rowan + lux review) ===
-  // Full CSS media query parser resolving against spoofed profile values.
-  // Handles both legacy (min-width: 1024px) and MQ Level 4 range syntax
-  // (width >= 1024px), (1024px <= width), (400px < width < 1200px).
-  //
-  // Security invariants (rowan + lux findings):
-  // - Hardware features (width, height, resolution, etc.) FAIL CLOSED
-  //   when values use unparseable units — never falls through to real
-  //   matchMedia for hardware-identifying queries.
-  // - All CSS length units (px, em, rem, vw, vh, cm, in, etc.) are parsed
-  //   using spoofed viewport dimensions, not real ones.
-  // - Listener callbacks are no-ops on spoofed queries — spoofed values
-  //   are fixed per session, so forwarding real resize/orientation events
-  //   would leak real dimensions through event.matches.
-  // - Preference features (prefers-color-scheme, etc.) pass through.
-  if (typeof window.matchMedia === "function") {
-    const origMatchMedia = window.matchMedia.bind(window);
-
-    const mq = {
-      width: innerW,
-      height: innerH,
-      deviceWidth: profile.screen.width,
-      deviceHeight: profile.screen.height,
-      dpr: spoofedDPR,
-      colorBits: profile.colorDepth,
-      orientation: profile.screen.width >= profile.screen.height ? "landscape" : "portrait",
-    };
-
-    // Features that reveal hardware/display characteristics — must never
-    // delegate to real matchMedia, even if we can't parse the value.
-    const HARDWARE_FEATURES = new Set([
-      "width", "height", "device-width", "device-height",
-      "aspect-ratio", "device-aspect-ratio", "resolution",
-      "color", "color-index", "monochrome",
-    ]);
-
-    // Parse CSS length to px using spoofed viewport dimensions.
-    // Handles all standard CSS length units to prevent leak via exotic units.
-    function parseLen(v) {
-      if (!v) return null;
-      const m = v.match(/^([\d.]+)\s*(px|em|rem|vw|vh|vmin|vmax|cm|mm|in|pt|pc)?$/);
-      if (!m) return null;
-      const n = parseFloat(m[1]);
-      switch (m[2] || "px") {
-        case "px": return n;
-        case "em": case "rem": return n * 16;
-        case "vw": return n * mq.width / 100;
-        case "vh": return n * mq.height / 100;
-        case "vmin": return n * Math.min(mq.width, mq.height) / 100;
-        case "vmax": return n * Math.max(mq.width, mq.height) / 100;
-        case "cm": return n * 96 / 2.54;
-        case "mm": return n * 96 / 25.4;
-        case "in": return n * 96;
-        case "pt": return n * 96 / 72;
-        case "pc": return n * 96 / 6;
-        default: return null;
-      }
-    }
-
-    function parseRes(v) {
-      if (!v) return null;
-      const m = v.match(/^([\d.]+)\s*(dppx|dpi|x)?$/);
-      if (!m) return null;
-      const n = parseFloat(m[1]);
-      if (!m[2]) return n; // bare number = dppx (e.g. -webkit-device-pixel-ratio: 2)
-      return m[2] === "dpi" ? n / 96 : n;
-    }
-
-    function parseRatio(v) {
-      if (!v) return null;
-      const parts = v.split("/").map(s => parseFloat(s.trim()));
-      if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1]) || parts[1] === 0) return null;
-      return parts[0] / parts[1];
-    }
-
-    // Get spoofed numeric value for a dimensional feature.
-    function featureValue(feat) {
-      switch (feat) {
-        case "width": return mq.width;
-        case "height": return mq.height;
-        case "device-width": return mq.deviceWidth;
-        case "device-height": return mq.deviceHeight;
-        case "resolution": return mq.dpr;
-        case "color": return 8;
-        case "color-index": return 0;
-        case "monochrome": return 0;
-        case "aspect-ratio": return mq.width / mq.height;
-        case "device-aspect-ratio": return mq.deviceWidth / mq.deviceHeight;
-        default: return undefined;
-      }
-    }
-
-    // Parse a feature's target value depending on the feature type.
-    function parseTarget(feat, valStr) {
-      if (feat === "resolution") return parseRes(valStr);
-      if (feat === "aspect-ratio" || feat === "device-aspect-ratio") return parseRatio(valStr);
-      return parseLen(valStr);
-    }
-
-    // Evaluate a discrete (non-dimensional) or preference feature.
-    function evalDiscrete(feat, val) {
-      switch (feat) {
-        case "pointer": case "any-pointer":
-          return val ? { matches: val === "fine" } : { matches: true };
-        case "hover": case "any-hover":
-          return val ? { matches: val === "hover" } : { matches: true };
-        case "orientation":
-          return val ? { matches: val === mq.orientation } : { matches: true };
-        case "display-mode":
-          return val ? { matches: val === "browser" } : { matches: true };
-        // Preference features — pass through to real matchMedia
-        case "prefers-color-scheme":
-        case "prefers-reduced-motion":
-        case "prefers-contrast":
-        case "forced-colors":
-        case "prefers-reduced-transparency":
-          return null;
-        default:
-          return null; // unknown — pass through
-      }
-    }
-
-    // Normalize WebKit-prefixed DPR queries to standard resolution.
-    // -webkit-device-pixel-ratio is a common Chromium fingerprinting vector
-    // that must not fall through to real matchMedia (rowan pass 9 finding).
-    function normalizeWebkitDPR(s) {
-      return s
-        .replace(/-webkit-min-device-pixel-ratio/g, "min-resolution")
-        .replace(/-webkit-max-device-pixel-ratio/g, "max-resolution")
-        .replace(/-webkit-device-pixel-ratio/g, "resolution");
-    }
-
-    // Evaluate a single parenthesized media feature expression.
-    // Handles legacy (feature: value) and MQ Level 4 range syntax.
-    function evalFeature(raw) {
-      const inner = normalizeWebkitDPR(raw.trim().replace(/^\(\s*/, "").replace(/\s*\)$/, "").trim());
-
-      // --- MQ Level 4 double range: value op feature op value ---
-      // e.g., (400px < width < 1200px), (1/2 <= aspect-ratio <= 16/9)
-      const dbl = inner.match(
-        /^(.+?)\s*(<=|>=|<|>)\s*([a-z][a-z0-9-]*)\s*(<=|>=|<|>)\s*(.+)$/
-      );
-      if (dbl) {
-        const [, v1s, op1, feat, op2, v2s] = dbl;
-        const actual = featureValue(feat);
-        if (actual === undefined) return evalDiscrete(feat, null);
-        const t1 = parseTarget(feat, v1s.trim());
-        const t2 = parseTarget(feat, v2s.trim());
-        if (t1 === null || t2 === null) {
-          return HARDWARE_FEATURES.has(feat) ? { matches: false } : null;
-        }
-        // v1 op1 feat: "v1 < feat" means feat > v1
-        let left;
-        if (op1 === "<") left = actual > t1;
-        else if (op1 === "<=") left = actual >= t1;
-        else if (op1 === ">") left = actual < t1;
-        else if (op1 === ">=") left = actual <= t1;
-        else left = false;
-        let right;
-        if (op2 === "<") right = actual < t2;
-        else if (op2 === "<=") right = actual <= t2;
-        else if (op2 === ">") right = actual > t2;
-        else if (op2 === ">=") right = actual >= t2;
-        else right = false;
-        return { matches: left && right };
-      }
-
-      // --- MQ Level 4 single range: feature op value ---
-      // e.g., (width >= 1024px), (resolution >= 2dppx)
-      const fov = inner.match(/^([a-z][a-z0-9-]*)\s*(<=|>=|<|>|=)\s*(.+)$/);
-      if (fov) {
-        const [, feat, op, valStr] = fov;
-        const actual = featureValue(feat);
-        if (actual === undefined) return evalDiscrete(feat, op === "=" ? valStr.trim() : null);
-        const target = parseTarget(feat, valStr.trim());
-        if (target === null) {
-          return HARDWARE_FEATURES.has(feat) ? { matches: false } : null;
-        }
-        switch (op) {
-          case ">=": return { matches: actual >= target };
-          case ">":  return { matches: actual > target };
-          case "<=": return { matches: actual <= target };
-          case "<":  return { matches: actual < target };
-          case "=":  return { matches: actual === target };
-          default:   return null;
-        }
-      }
-
-      // --- MQ Level 4 reversed: value op feature ---
-      // e.g., (1024px <= width)
-      const vof = inner.match(/^(.+?)\s*(<=|>=|<|>|=)\s*([a-z][a-z0-9-]*)$/);
-      if (vof) {
-        const [, valStr, op, feat] = vof;
-        const actual = featureValue(feat);
-        if (actual === undefined) return evalDiscrete(feat, op === "=" ? valStr.trim() : null);
-        const target = parseTarget(feat, valStr.trim());
-        if (target === null) {
-          return HARDWARE_FEATURES.has(feat) ? { matches: false } : null;
-        }
-        // Reverse operator: "1024px <= width" means "width >= 1024px"
-        const revOps = { "<": ">", "<=": ">=", ">": "<", ">=": "<=", "=": "=" };
-        const rev = revOps[op];
-        switch (rev) {
-          case ">=": return { matches: actual >= target };
-          case ">":  return { matches: actual > target };
-          case "<=": return { matches: actual <= target };
-          case "<":  return { matches: actual < target };
-          case "=":  return { matches: actual === target };
-          default:   return null;
-        }
-      }
-
-      // --- Legacy colon syntax: (feature: value) or (feature) ---
-      const legacy = inner.match(/^([a-z][a-z0-9-]*)\s*(?::\s*(.+))?$/);
-      if (!legacy) return null;
-      let feat = legacy[1];
-      const val = legacy[2] ? legacy[2].trim() : null;
-      let prefix = "";
-      if (feat.startsWith("min-")) { prefix = "min"; feat = feat.slice(4); }
-      else if (feat.startsWith("max-")) { prefix = "max"; feat = feat.slice(4); }
-
-      const actual = featureValue(feat);
-      if (actual !== undefined) {
-        if (!val && !prefix) return { matches: actual > 0 };
-        const target = parseTarget(feat, val);
-        if (target === null) {
-          return HARDWARE_FEATURES.has(feat) ? { matches: false } : null;
-        }
-        if (prefix === "min") return { matches: actual >= target };
-        if (prefix === "max") return { matches: actual <= target };
-        return { matches: actual === target };
-      }
-      return evalDiscrete(feat, val);
-    }
-
-    // Evaluate a full media query string.
-    // Handles "and" combinators and comma-separated lists (OR).
-    function evalQuery(query) {
-      const orClauses = query.split(",").map(s => s.trim());
-      let anyNull = false;
-
-      for (const clause of orClauses) {
-        let work = clause
-          .replace(/^\s*only\s+/i, "")
-          .replace(/^\s*(all|screen|print|speech)\s*/i, "")
-          .replace(/^\s*and\s+/i, "");
-        let invert = false;
-        if (/^\s*not\s+/i.test(clause)) {
-          invert = true;
-          work = clause.replace(/^\s*not\s+/i, "")
-            .replace(/^\s*(all|screen|print|speech)\s*/i, "")
-            .replace(/^\s*and\s+/i, "");
-        }
-        if (/^\s*(not\s+)?(print|speech)\b/i.test(clause)) {
-          if (!invert) continue;
-          return true;
-        }
-        const features = work.match(/\([^)]+\)/g);
-        if (!features || features.length === 0) {
-          if (invert) continue;
-          return true;
-        }
-        let clauseResult = true;
-        for (const feat of features) {
-          const result = evalFeature(feat);
-          if (result === null) { anyNull = true; clauseResult = false; break; }
-          if (result.matches === null) { anyNull = true; clauseResult = false; break; }
-          if (!result.matches) { clauseResult = false; break; }
-        }
-        if (invert) clauseResult = !clauseResult;
-        if (clauseResult) return true;
-      }
-      if (anyNull) return null;
-      return false;
-    }
-
-    window.matchMedia = disguise(function(query) {
-      const result = evalQuery(query);
-      if (result === null) {
-        // Unrecognized/preference features — delegate to real matchMedia
-        return origMatchMedia(query);
-      }
-
-      // Build a fake MediaQueryList with fixed spoofed matches.
-      // Listeners are no-ops: spoofed values don't change mid-session,
-      // so forwarding real change events would leak actual dimensions
-      // via event.matches (rowan finding #2).
-      const fakeList = Object.create(MediaQueryList.prototype);
-      Object.defineProperties(fakeList, {
-        matches: { get: () => result, enumerable: true },
-        media: { get: () => query, enumerable: true },
-      });
-      fakeList.addEventListener = function() {};
-      fakeList.removeEventListener = function() {};
-      fakeList.addListener = function() {};
-      fakeList.removeListener = function() {};
-      fakeList.dispatchEvent = function() { return true; };
-      return fakeList;
-    }, "matchMedia");
-  }
-
-  // === Canvas fingerprint noise ===
-  // Rowan pass 4 finding #5: noise MUST be deterministic for the same input.
-  // An advancing PRNG means repeated identical toDataURL() calls produce
-  // different output — a strong tampering signal. Instead, derive noise
-  // from hash(canvasSeed + pixelIndex + pixelValue). Same canvas content
-  // always produces the same noised output within the same session.
-  //
-  // Offscreen clone prevents visible canvas corruption (lux review).
-  // Always wraps from ORIG references, never from current prototype (rowan pass 2).
-
-  // Fast deterministic hash: derive a ±0-3 noise value from seed + position + pixel value.
-  // Uses a simple xorshift-like mixing function instead of a PRNG.
-  function pixelNoise(seed, i, val) {
-    let h = seed ^ (i * 2654435761);
-    h = (h ^ (val * 2246822519)) >>> 0;
-    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
-    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
-    h = (h ^ (h >>> 16)) >>> 0;
-    // ±0-3 noise with weighted distribution: creates larger equivalence
-    // classes than ±1 while remaining visually imperceptible. Uses 3 bits
-    // of hash for magnitude (0-3) and 1 bit for sign.
-    const magnitude = (h >>> 1) & 3;
-    return (h & 1) ? magnitude : -magnitude;
-  }
-
-  // Apply deterministic ±0-3 noise to an ImageData's RGB channels in-place.
-  function applyCanvasNoise(px, seed) {
-    for (let i = 0; i < px.length; i += 4) {
-      px[i]   = Math.max(0, Math.min(255, px[i]   + pixelNoise(seed, i, px[i])));
-      px[i+1] = Math.max(0, Math.min(255, px[i+1] + pixelNoise(seed, i+1, px[i+1])));
-      px[i+2] = Math.max(0, Math.min(255, px[i+2] + pixelNoise(seed, i+2, px[i+2])));
-    }
-  }
-
-  function noisyClone(src) {
-    const c = document.createElement("canvas");
-    c.width = src.width; c.height = src.height;
-    const ctx = c.getContext("2d");
-    ctx.drawImage(src, 0, 0);
-    // Use ORIG.getImageData to get raw pixel data WITHOUT noise.
-    // The patched getImageData (below) already applies applyCanvasNoise,
-    // so calling the patched version here would apply noise once, then
-    // applyCanvasNoise below would apply it AGAIN — double noise on
-    // toDataURL/toBlob but single noise on direct getImageData.
-    const id = ORIG.getImageData.call(ctx, 0, 0, c.width, c.height);
-    applyCanvasNoise(id.data, profile.canvasSeed);
-    ctx.putImageData(id, 0, 0);
-    return c;
-  }
-
-  HTMLCanvasElement.prototype.toDataURL = disguise(function(...args) {
-    try {
-      if (this.width > 0 && this.height > 0)
-        return ORIG.toDataURL.apply(noisyClone(this), args);
-    } catch(e) {}
-    return ORIG.toDataURL.apply(this, args);
-  }, "toDataURL");
-
-  HTMLCanvasElement.prototype.toBlob = disguise(function(cb, ...args) {
-    try {
-      if (this.width > 0 && this.height > 0)
-        return ORIG.toBlob.call(noisyClone(this), cb, ...args);
-    } catch(e) {}
-    return ORIG.toBlob.call(this, cb, ...args);
-  }, "toBlob");
-
-  CanvasRenderingContext2D.prototype.getImageData = disguise(function(...args) {
-    const id = ORIG.getImageData.apply(this, args);
-    applyCanvasNoise(id.data, profile.canvasSeed);
-    return id;
-  }, "getImageData", 4);
-
-  // === Font fingerprinting defense (measureText noise) ===
-  // Rowan pass 4 finding #5: noise must be deterministic for the same input.
-  // Hash the text content + font + canvasSeed to produce stable noise.
-  //
-  // v3 item 5b: Font enumeration resistance. CSS font probing works by
-  // measuring text width with a candidate font vs a fallback — if widths
-  // differ, the font is installed. Amplified noise for known probe fonts
-  // collapses the width delta signal, making font presence undetectable
-  // via measureText. The JS-side measurement becomes unreliable while
-  // CSS rendering is unaffected.
-  const _fontProbeSet = new Set([
-    // Top system fonts used by FingerprintJS, CreepJS, and font-enumeration scripts
-    "Arial", "Verdana", "Times New Roman", "Georgia", "Trebuchet MS",
-    "Courier New", "Impact", "Comic Sans MS", "Palatino Linotype",
-    "Lucida Console", "Lucida Sans Unicode", "Tahoma", "Century Gothic",
-    "Bookman Old Style", "Garamond", "MS Gothic", "MS PGothic",
-    "MS Sans Serif", "MS Serif", "Wingdings", "Webdings", "Symbol",
-    "Segoe UI", "Calibri", "Cambria", "Consolas", "Candara",
-    "Franklin Gothic Medium", "Copperplate Gothic Bold",
-    "Papyrus", "Brush Script MT", "Rockwell", "Bodoni MT",
-    // macOS-specific probes
-    "Helvetica Neue", "Menlo", "Monaco", "Optima", "Futura",
-    "American Typewriter", "Baskerville", "Didot", "Gill Sans",
-    // Linux probes
-    "DejaVu Sans", "Liberation Sans", "Ubuntu", "Noto Sans",
-  ]);
-
-  function _isFontProbe(fontString) {
-    if (!fontString) return false;
-    // CSS font shorthand: "12px Arial" or "bold 14px 'Times New Roman', serif"
-    // Extract font-family portion (everything after the last size token)
-    const parts = fontString.split(/\d+(?:px|pt|em|rem|%)\s*/);
-    const familyPart = parts.length > 1 ? parts[parts.length - 1] : fontString;
-    // Check each family in the comma-separated list
-    const families = familyPart.split(",");
-    for (const f of families) {
-      const clean = f.trim().replace(/^['"]|['"]$/g, "");
-      if (_fontProbeSet.has(clean)) return true;
-    }
-    return false;
-  }
-
-  const origMeasureText = CanvasRenderingContext2D.prototype.measureText;
-  CanvasRenderingContext2D.prototype.measureText = disguise(function(text) {
-    const metrics = origMeasureText.call(this, text);
-    // Deterministic noise: hash text + font + seed → stable offset
-    let h = profile.canvasSeed;
-    const input = (text || "") + (this.font || "");
-    for (let i = 0; i < input.length; i++) {
-      h = Math.imul(h ^ input.charCodeAt(i), 0x5bd1e995);
-      h = (h ^ (h >>> 15)) >>> 0;
-    }
-    // v3 5b: amplify noise for known font-probe fonts (±0.5px vs ±0.1px)
-    // to collapse the width delta used by font enumeration scripts
-    const isProbe = _isFontProbe(this.font);
-    const noise = isProbe
-      ? ((h % 1000) - 500) / 1000  // ±0.5px for probe fonts
-      : ((h % 200) - 100) / 1000;  // ±0.1px for normal use
-    return new Proxy(metrics, {
-      get(target, prop) {
-        if (prop === "width") return target.width + noise;
-        const val = target[prop];
-        return typeof val === "function" ? val.bind(target) : val;
-      }
-    });
-  }, "measureText");
-
-  // === WebGL fingerprint spoofing (profile-bucketed) ===
-  // WebGL capability parameters leak hardware identity through unique
-  // combinations of limits. Caps are bucketed by renderer profile to
-  // avoid contradiction fingerprints (e.g., Apple M1 caps on NVIDIA renderer).
-  //
-  // Cap buckets derived from real-world WebGL reports:
-  // - apple: OpenGL 4.1 limits (M1/M2, Iris Plus on Mac)
-  // - intel_low: Intel HD 620 class
-  // - intel_mid: Intel UHD 630 / Iris Xe class
-  // - nvidia_mid: GTX 1060 / RTX 3060 / AMD RX class
-  // - nvidia_high: RTX 4070+ class
-  const GL_CAP_BUCKETS = {
-    apple: {
-      0x0D33: 16384, 0x851C: 16384, 0x84E8: 16384,
-      0x8869: 16, 0x8872: 4096, 0x8B4C: 16, 0x8871: 30,
-      0x8824: 1024, 0x8B4D: 16, 0x8B4A: 32,
-      viewportDims: [16384, 16384], lineWidthRange: [1, 1],
-      pointSizeRange: [1, 255], maxAnisotropy: 16,
-    },
-    intel_low: {
-      0x0D33: 16384, 0x851C: 16384, 0x84E8: 16384,
-      0x8869: 16, 0x8872: 4096, 0x8B4C: 16, 0x8871: 30,
-      0x8824: 1024, 0x8B4D: 16, 0x8B4A: 32,
-      viewportDims: [16384, 16384], lineWidthRange: [1, 7.375],
-      pointSizeRange: [1, 255], maxAnisotropy: 16,
-    },
-    intel_mid: {
-      0x0D33: 16384, 0x851C: 16384, 0x84E8: 16384,
-      0x8869: 16, 0x8872: 4096, 0x8B4C: 16, 0x8871: 30,
-      0x8824: 1024, 0x8B4D: 16, 0x8B4A: 32,
-      viewportDims: [32767, 32767], lineWidthRange: [1, 7.375],
-      pointSizeRange: [1, 255], maxAnisotropy: 16,
-    },
-    nvidia_mid: {
-      0x0D33: 16384, 0x851C: 16384, 0x84E8: 16384,
-      0x8869: 16, 0x8872: 4096, 0x8B4C: 16, 0x8871: 32,
-      0x8824: 1024, 0x8B4D: 16, 0x8B4A: 32,
-      viewportDims: [32767, 32767], lineWidthRange: [1, 1],
-      pointSizeRange: [1, 1024], maxAnisotropy: 16,
-    },
-    nvidia_high: {
-      0x0D33: 32768, 0x851C: 32768, 0x84E8: 32768,
-      0x8869: 16, 0x8872: 4096, 0x8B4C: 16, 0x8871: 32,
-      0x8824: 1024, 0x8B4D: 16, 0x8B4A: 32,
-      viewportDims: [32767, 32767], lineWidthRange: [1, 1],
-      pointSizeRange: [1, 1024], maxAnisotropy: 16,
-    },
-  };
-
-  // Map renderer strings to cap buckets
-  function getCapBucket(renderer) {
-    if (/Apple\s+M[12]/.test(renderer)) return GL_CAP_BUCKETS.apple;
-    if (/Iris.*Plus/.test(renderer)) return GL_CAP_BUCKETS.apple; // Mac Intel Iris Plus uses same OGL 4.1 limits
-    if (/HD\s+Graphics\s+6[12]0/.test(renderer)) return GL_CAP_BUCKETS.intel_low;
-    if (/UHD\s+Graphics|Iris.*Xe/.test(renderer)) return GL_CAP_BUCKETS.intel_mid;
-    if (/RTX\s+4/.test(renderer)) return GL_CAP_BUCKETS.nvidia_high;
-    // GTX, RTX 3xxx, AMD RX → nvidia_mid (shared mid-range discrete GPU bucket)
-    return GL_CAP_BUCKETS.nvidia_mid;
-  }
-
-  const activeGlCaps = getCapBucket(profile.gpu.renderer);
-
-  function spoofGlGetParameter(origFn) {
-    return disguise(function(param) {
-      if (param === 0x9245) return profile.gpu.vendor;
-      if (param === 0x9246) return profile.gpu.renderer;
-      if (activeGlCaps[param] !== undefined) return activeGlCaps[param];
-      if (param === 0x0D3D) return new Int32Array(activeGlCaps.viewportDims);        // MAX_VIEWPORT_DIMS
-      if (param === 0x846E) return new Float32Array(activeGlCaps.lineWidthRange);    // ALIASED_LINE_WIDTH_RANGE
-      if (param === 0x8460) return new Float32Array(activeGlCaps.pointSizeRange);    // ALIASED_POINT_SIZE_RANGE
-      if (param === 0x84FF) return activeGlCaps.maxAnisotropy;                       // MAX_TEXTURE_MAX_ANISOTROPY_EXT
-      return origFn.call(this, param);
-    }, "getParameter");
-  }
-  if (ORIG.glGetParameter) {
-    WebGLRenderingContext.prototype.getParameter = spoofGlGetParameter(ORIG.glGetParameter);
-  }
-  if (ORIG.gl2GetParameter) {
-    WebGL2RenderingContext.prototype.getParameter = spoofGlGetParameter(ORIG.gl2GetParameter);
-  }
-
-  // === WebGL getSupportedExtensions spoofing ===
-  // The extension list is highly specific to the real GPU. Normalize to
-  // a common baseline set that matches the spoofed GPU vendor.
-  const COMMON_WEBGL_EXTENSIONS = [
-    "ANGLE_instanced_arrays", "EXT_blend_minmax", "EXT_color_buffer_half_float",
-    "EXT_float_blend", "EXT_frag_depth", "EXT_shader_texture_lod",
-    "EXT_texture_filter_anisotropic", "OES_element_index_uint",
-    "OES_standard_derivatives", "OES_texture_float", "OES_texture_float_linear",
-    "OES_texture_half_float", "OES_texture_half_float_linear",
-    "OES_vertex_array_object", "WEBGL_color_buffer_float",
-    "WEBGL_compressed_texture_s3tc", "WEBGL_debug_renderer_info",
-    "WEBGL_depth_texture", "WEBGL_draw_buffers", "WEBGL_lose_context",
-  ];
-  const spoofedGetSupportedExtensions = disguise(function() {
-    return [...COMMON_WEBGL_EXTENSIONS];
-  }, "getSupportedExtensions");
-  if (typeof WebGLRenderingContext !== "undefined") {
-    WebGLRenderingContext.prototype.getSupportedExtensions = spoofedGetSupportedExtensions;
-  }
-  if (typeof WebGL2RenderingContext !== "undefined") {
-    WebGL2RenderingContext.prototype.getSupportedExtensions = spoofedGetSupportedExtensions;
-  }
-
-  // === WebGL getExtension() coherence wrapper ===
-  // getSupportedExtensions() advertises a normalized list; getExtension() must
-  // return coherent objects for spoofed extensions, pass through for others,
-  // and return null for extensions not in the advertised set.
-  const COMMON_EXT_SET = new Set(COMMON_WEBGL_EXTENSIONS);
-
-  function spoofGetExtension(origFn) {
-    return disguise(function(name) {
-      // Extensions not in our advertised set → null (coherent with getSupportedExtensions)
-      if (!COMMON_EXT_SET.has(name)) return null;
-
-      // WEBGL_debug_renderer_info: return constants matching spoofed vendor/renderer
-      if (name === "WEBGL_debug_renderer_info") {
-        // Try to get the real extension object to preserve native prototype
-        const real = origFn.call(this, name);
-        if (real) return real; // Real object has the correct constants (0x9245, 0x9246)
-        // Fallback: return a stub with the standard constants
-        return {
-          UNMASKED_VENDOR_WEBGL: 0x9245,
-          UNMASKED_RENDERER_WEBGL: 0x9246,
-        };
-      }
-
-      // EXT_texture_filter_anisotropic: return object with MAX constant = 16
-      if (name === "EXT_texture_filter_anisotropic") {
-        const real = origFn.call(this, name);
-        if (real) return real; // Real object has TEXTURE_MAX_ANISOTROPY_EXT + MAX constant
-        // Fallback stub matching the spec constants
-        return {
-          TEXTURE_MAX_ANISOTROPY_EXT: 0x84FE,
-          MAX_TEXTURE_MAX_ANISOTROPY_EXT: 0x84FF,
-        };
-      }
-
-      // All other advertised extensions: pass through to native
-      return origFn.call(this, name);
-    }, "getExtension");
-  }
-  if (ORIG.glGetExtension) {
-    WebGLRenderingContext.prototype.getExtension = spoofGetExtension(ORIG.glGetExtension);
-  }
-  if (ORIG.gl2GetExtension) {
-    WebGL2RenderingContext.prototype.getExtension = spoofGetExtension(ORIG.gl2GetExtension);
-  }
-
-  // === WebGL getShaderPrecisionFormat normalization ===
-  // Shader precision varies by GPU: mantissa bits, range min/max differ
-  // across vendors. Normalize to highp everywhere (standard float: 23-bit
-  // mantissa, [-127, 127] range) — common on desktop GPUs.
-  // Option A (atlas): call real method to get native WebGLShaderPrecisionFormat
-  // object, then mutate numeric fields. Preserves prototype/constructor/instanceof.
-  function spoofGetShaderPrecisionFormat(origFn) {
-    return disguise(function(shaderType, precisionType) {
-      const real = origFn.call(this, shaderType, precisionType);
-      if (!real) return real;
-      // Mutate the native object's fields — preserves [[Class]], prototype chain,
-      // instanceof WebGLShaderPrecisionFormat, descriptor shape, and toString tag.
-      ORIG.defineProperty.call(Object, real, "rangeMin", { value: 127, writable: false, enumerable: true, configurable: false });
-      ORIG.defineProperty.call(Object, real, "rangeMax", { value: 127, writable: false, enumerable: true, configurable: false });
-      ORIG.defineProperty.call(Object, real, "precision", { value: 23, writable: false, enumerable: true, configurable: false });
-      return real;
-    }, "getShaderPrecisionFormat");
-  }
-  if (ORIG.glGetShaderPrecisionFormat) {
-    WebGLRenderingContext.prototype.getShaderPrecisionFormat = spoofGetShaderPrecisionFormat(ORIG.glGetShaderPrecisionFormat);
-  }
-  if (ORIG.gl2GetShaderPrecisionFormat) {
-    WebGL2RenderingContext.prototype.getShaderPrecisionFormat = spoofGetShaderPrecisionFormat(ORIG.gl2GetShaderPrecisionFormat);
-  }
-
-  // === WebGL readPixels noise (v2 item 5) ===
-  // FingerprintJS commercial uses readPixels to extract rendered framebuffer
-  // data for GPU fingerprinting. Same pixelNoise pipeline as canvas 2D.
-  // readPixels writes into caller-supplied ArrayBufferView (mutate in-place).
-  function spoofGlReadPixels(origFn) {
-    return disguise(function(x, y, w, h, format, type, pixels) {
-      origFn.call(this, x, y, w, h, format, type, pixels);
-      // Only noise RGBA/UNSIGNED_BYTE reads (the fingerprinting path).
-      // Other format/type combos (FLOAT, HALF_FLOAT, depth, stencil) are
-      // rendering-critical and not used for fingerprinting.
-      if (pixels && format === 0x1908 /* RGBA */ && type === 0x1401 /* UNSIGNED_BYTE */) {
-        applyCanvasNoise(pixels, profile.canvasSeed);
-      }
-    }, "readPixels");
-  }
-  if (ORIG.glReadPixels) {
-    WebGLRenderingContext.prototype.readPixels = spoofGlReadPixels(ORIG.glReadPixels);
-  }
-  if (ORIG.gl2ReadPixels) {
-    WebGL2RenderingContext.prototype.readPixels = spoofGlReadPixels(ORIG.gl2ReadPixels);
-  }
-
-  // === OffscreenCanvas noise (v2 item 5) ===
-  // OffscreenCanvas is the main bypass for canvas fingerprinting defenses.
-  // FingerprintJS, CreepJS, and commercial trackers use it because most
-  // extensions only patch HTMLCanvasElement.
-  if (typeof OffscreenCanvas !== "undefined") {
-    // convertToBlob: OffscreenCanvas equivalent of toBlob.
-    // Uses a temporary clone to avoid mutating the caller's canvas.
-    // Without the clone, repeated convertToBlob calls would compound noise
-    // and page JS could detect the mutation via getImageData before/after.
-    OffscreenCanvas.prototype.convertToBlob = disguise(function(...args) {
-      try {
-        if (this.width > 0 && this.height > 0) {
-          const ctx = this.getContext("2d");
-          if (ctx) {
-            const getImageData = ORIG.offscreenGetImageData || ctx.getImageData.bind(ctx);
-            const id = getImageData.call(ctx, 0, 0, this.width, this.height);
-            applyCanvasNoise(id.data, profile.canvasSeed);
-            // Export from a temporary clone — never mutate the caller's canvas
-            const tmp = new OffscreenCanvas(this.width, this.height);
-            const tmpCtx = tmp.getContext("2d");
-            tmpCtx.putImageData(id, 0, 0);
-            return ORIG.offscreenConvertToBlob.apply(tmp, args);
+    }, "getOwnPropertyDescriptor"), "getOwnPropertyDescriptor");
+    Object.getOwnPropertyDescriptors = disguise(/* @__PURE__ */ __name(function getOwnPropertyDescriptors(obj) {
+      const descs = ORIG.getOwnPropertyDescriptors.call(Object, obj);
+      const spoofed = _spoofedProps.get(obj);
+      if (spoofed) {
+        for (const [prop, pristine] of spoofed) {
+          if (descs[prop] && descs[prop].get && pristine) {
+            descs[prop].configurable = pristine.configurable;
+            descs[prop].enumerable = pristine.enumerable;
           }
         }
-      } catch(e) {}
-      return ORIG.offscreenConvertToBlob.apply(this, args);
-    }, "convertToBlob");
-
-    // OffscreenCanvasRenderingContext2D.getImageData: same noise as 2D canvas.
-    if (typeof OffscreenCanvasRenderingContext2D !== "undefined" && ORIG.offscreenGetImageData) {
-      OffscreenCanvasRenderingContext2D.prototype.getImageData = disguise(function(...args) {
-        const id = ORIG.offscreenGetImageData.apply(this, args);
-        applyCanvasNoise(id.data, profile.canvasSeed);
-        return id;
-      }, "getImageData", 4);
-    }
-  }
-
-  // === AudioContext fingerprint noise ===
-  // Rowan pass 4 finding #5: deterministic per-sample noise.
-  // Uses hash(audioSeed + channel + sampleIndex + sampleValue) for stability.
-  //
-  // Rowan pass 6 finding #3: getChannelData returns a live reference to the
-  // underlying Float32Array. Mutating in-place means repeated reads compound
-  // noise (each call re-noises already-noised data). Fix: track which
-  // buffer+channel combos have been noised via WeakMap. Apply noise exactly
-  // once per buffer+channel; subsequent reads return the already-noised buffer.
-  if (ORIG.getChannelData) {
-    const _noisedBuffers = new WeakMap();
-
-    AudioBuffer.prototype.getChannelData = disguise(function(channel) {
-      const data = ORIG.getChannelData.call(this, channel);
-
-      // Only noise each buffer+channel once
-      let noised = _noisedBuffers.get(this);
-      if (!noised) { noised = new Set(); _noisedBuffers.set(this, noised); }
-      if (noised.has(channel)) return data;
-      noised.add(channel);
-
-      const seed = profile.audioSeed ^ (channel * 0x9e3779b9);
-      for (let i = 0; i < data.length; i++) {
-        // Deterministic micro-noise from seed + position + quantized value
-        let h = seed ^ (i * 2654435761);
-        h = Math.imul(h ^ ((data[i] * 1e6) >>> 0), 0x45d9f3b);
-        h = (h ^ (h >>> 16)) >>> 0;
-        data[i] += ((h % 200) - 100) * 0.0000005; // ~±0.00005
       }
-      return data;
-    }, "getChannelData");
-  }
-
-  // === Sensor API defense (v1.1 item 3) ===
-  // Desktop Chrome exposes DeviceMotion/Orientation events and Generic
-  // Sensor API on convertible laptops with MEMS sensors (accelerometer,
-  // gyroscope). Research: ETH Zurich demonstrated >94% cross-site
-  // fingerprinting accuracy from motion data alone. JShelter proves the
-  // prototype-override approach works in production.
-  //
-  // Strategy: override prototype getters to return null/zero values,
-  // consistent with a standard desktop without sensor hardware.
-  // Does NOT delete constructors (that changes API surface and is
-  // itself a fingerprinting signal).
-
-  // DeviceMotionEvent: null acceleration/rotationRate = no sensor hardware
-  if (typeof DeviceMotionEvent !== "undefined") {
-    spoof(DeviceMotionEvent.prototype, "acceleration", () => null);
-    spoof(DeviceMotionEvent.prototype, "accelerationIncludingGravity", () => null);
-    spoof(DeviceMotionEvent.prototype, "rotationRate", () => null);
-    spoof(DeviceMotionEvent.prototype, "interval", () => 0);
-  }
-
-  // DeviceOrientationEvent: null alpha/beta/gamma = no sensor hardware
-  if (typeof DeviceOrientationEvent !== "undefined") {
-    spoof(DeviceOrientationEvent.prototype, "alpha", () => null);
-    spoof(DeviceOrientationEvent.prototype, "beta", () => null);
-    spoof(DeviceOrientationEvent.prototype, "gamma", () => null);
-    spoof(DeviceOrientationEvent.prototype, "absolute", () => false);
-  }
-
-  // Generic Sensor API: override reading properties on all sensor prototypes.
-  // Accelerometer, Gyroscope, etc. — x/y/z return null (no hardware).
-  // AmbientLightSensor is behind an expired Chrome flag, included for completeness.
-  const _sensorClasses = [
-    "Accelerometer", "Gyroscope", "LinearAccelerationSensor",
-    "AbsoluteOrientationSensor", "RelativeOrientationSensor",
-    "GravitySensor", "Magnetometer", "AmbientLightSensor",
-  ];
-  const _sensorProps = ["x", "y", "z", "quaternion", "illuminance"];
-  for (const cls of _sensorClasses) {
-    if (typeof window[cls] !== "undefined") {
-      for (const prop of _sensorProps) {
-        spoof(window[cls].prototype, prop, () => null);
-      }
-    }
-  }
-
-  // === WebAudio near-ultrasonic attenuation (v1.1 item 4) ===
-  // Intercepts AudioNode.connect() to insert a BiquadFilterNode (highshelf
-  // at 17999 Hz, -70 dB) before any AudioDestinationNode. Attenuates
-  // near-ultrasonic frequencies (17-20 kHz) used by cross-device tracking
-  // beacons (SilverPush, USAT framework). Based on Silverdog/SilverWall
-  // proven approach (PETS 2017). Does not affect audible audio (<17 kHz).
-  //
-  // Breakage risk: low. Near-ultrasonic frequencies are inaudible to most
-  // adults. Affected niche uses: data-over-sound device pairing (Chirp.io,
-  // Google Nearby — both deprecated), dog whistle apps, web audiometry.
-  // These can be whitelisted per-site via the existing __pgd cookie.
-  if (ORIG.audioConnect) {
-    AudioNode.prototype.connect = disguise(function connect(destination, output, input) {
-      // Insert ultrasonic filter before AudioDestinationNode (speakers)
-      // AND before AnalyserNode (lux review: USAT trackers route
-      // MediaElementSource → AnalyserNode to read ultrasonic frequencies
-      // upstream of any destination filter).
-      if (destination instanceof AudioDestinationNode ||
-          destination instanceof AnalyserNode) {
-        try {
-          const ctx = this.context || destination.context;
-          const filter = ctx.createBiquadFilter();
-          filter.type = "highshelf";
-          filter.frequency.value = 17999;
-          filter.Q.value = 0;
-          filter.gain.value = -70;
-          // Preserve caller's output index; filter input is always 0
-          ORIG.audioConnect.call(this, filter, output, 0);
-          // Preserve caller's input index; filter output is always 0
-          return ORIG.audioConnect.call(filter, destination, 0, input);
-        } catch(e) {
-          return ORIG.audioConnect.call(this, destination, output, input);
+      return descs;
+    }, "getOwnPropertyDescriptors"), "getOwnPropertyDescriptors");
+    if (ORIG.reflectGOPD) {
+      Reflect.getOwnPropertyDescriptor = disguise(/* @__PURE__ */ __name(function getOwnPropertyDescriptor(target, prop) {
+        const desc = ORIG.reflectGOPD.call(Reflect, target, prop);
+        if (!desc || !desc.get) return desc;
+        const spoofed = _spoofedProps.get(target);
+        if (spoofed && spoofed.has(prop)) {
+          const pristine = spoofed.get(prop);
+          if (pristine) {
+            desc.configurable = pristine.configurable;
+            desc.enumerable = pristine.enumerable;
+          }
         }
-      }
-      return ORIG.audioConnect.call(this, destination, output, input);
-    }, "connect", 1);
-  }
-
-  // === Behavioral biometric precision-reduction (v2 item 3) ===
-  // Reduces precision of timing, coordinate, and scroll surfaces used by
-  // behavioral biometric classifiers (ThreatMetrix, Trusteer, FingerprintJS
-  // Pro). Does NOT synthesize a different human — raises classification cost
-  // by adding deterministic noise. All noise derived from session seed via
-  // bioSeed, using truncated Gaussian (hash-based Box-Muller) for non-uniform
-  // distribution. Cross-surface coherence: shared bioSeed + per-surface salts.
-  //
-  // Surfaces: Event.timeStamp, performance.now(), MouseEvent coordinates,
-  // WheelEvent deltas. Coordinate/wheel noise skipped for synthetic events
-  // (isTrusted=false), editable/canvas/SVG targets, drag events, and
-  // allowlisted high-interaction sites. Timestamp jitter applies to trusted
-  // events only (synthetic events bypass); performance.now quantization +
-  // Gaussian jitter applies everywhere (monotonic-clamped). Both are invisible
-  // to the user.
-
-  // Per-surface salts for cross-surface coherence (Gate 4).
-  const BIO_SALT_TIMESTAMP = 0x54494D45;
-  const BIO_SALT_PERFNOW   = 0x50455246;
-  const BIO_SALT_MOUSE_X   = 0x4D585858;
-  const BIO_SALT_MOUSE_Y   = 0x4D595959;
-
-  // Truncated Gaussian via hash-based Box-Muller (Gate 2: non-uniform).
-  // Pure function of inputs — no advancing state (Gate 5).
-  // Clamp (not re-sample) preserves determinism.
-  function bioGaussian(seed, salt, inputHash, sigma, bound) {
-    let h1 = seed ^ salt ^ inputHash;
-    h1 = Math.imul(h1 ^ (h1 >>> 16), 0x45d9f3b);
-    h1 = Math.imul(h1 ^ (h1 >>> 16), 0x45d9f3b);
-    h1 = (h1 ^ (h1 >>> 16)) >>> 0;
-    let h2 = seed ^ Math.imul(salt, 0x9e3779b9) ^ inputHash;
-    h2 = Math.imul(h2 ^ (h2 >>> 16), 0x45d9f3b);
-    h2 = Math.imul(h2 ^ (h2 >>> 16), 0x45d9f3b);
-    h2 = (h2 ^ (h2 >>> 16)) >>> 0;
-    const u1 = (h1 + 1) / 4294967297;
-    const u2 = (h2 + 1) / 4294967297;
-    let z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2) * sigma;
-    if (z > bound) z = bound;
-    if (z < -bound) z = -bound;
-    return z;
-  }
-
-  // Allowlist: skip coordinate + wheel noise on high-interaction sites.
-  const _bioCoordSkip = new Set([
-    "docs.google.com", "sheets.google.com", "slides.google.com",
-    "figma.com", "www.figma.com",
-    "maps.google.com", "www.openstreetmap.org",
-    "excalidraw.com", "www.canva.com",
-  ]);
-  const _skipCoordNoise = _bioCoordSkip.has(location.hostname);
-
-  // --- Event.timeStamp jitter ---
-  // ±1ms deterministic jitter. WeakMap cache ensures stable re-reads.
-  // No global monotonicity state — bounded ±1ms jitter means events
-  // >2ms apart cannot invert. Events <2ms apart are within the browser's
-  // own event scheduling jitter and not meaningful for biometric analysis.
-  const _origTSDesc = ORIG.getOwnPropertyDescriptor.call(Object, Event.prototype, "timeStamp");
-  if (_origTSDesc && _origTSDesc.get) {
-    const _tsCache = new WeakMap();
-
-    spoof(Event.prototype, "timeStamp", function() {
-      const cached = _tsCache.get(this);
-      if (cached !== undefined) return cached;
-
-      const real = _origTSDesc.get.call(this);
-
-      // Synthetic events (isTrusted=false) pass through unjittered —
-      // modifying constructor-controlled values is a detection oracle.
-      if (!this.isTrusted) {
-        _tsCache.set(this, real);
-        return real;
-      }
-
-      const jitter = bioGaussian(bioSeed, BIO_SALT_TIMESTAMP, (real * 1000) >>> 0, 0.5, 1.0); // ±1ms Gaussian
-
-      const result = real + jitter;
-      _tsCache.set(this, result);
-      return result;
-    });
-  }
-
-  // --- performance.now() precision reduction ---
-  // Quantize to 0.1ms + Gaussian jitter (±0.1ms max), with monotonic clamp.
-  // The jitter is a pure function of the quantized bucket, so adjacent buckets
-  // can produce different offsets. Without clamping, a later call could return
-  // a smaller value — violating the monotonic non-decreasing invariant that
-  // timing consumers and fingerprint detectors expect. The closure-held
-  // _perfLast ensures output never decreases.
-  const _origPerfNow = Performance.prototype.now;
-  let _perfLast = 0;
-  Performance.prototype.now = disguise(function() {
-    const real = _origPerfNow.call(this);
-    const quantized = Math.round(real * 10) / 10;
-    const jitter = bioGaussian(bioSeed, BIO_SALT_PERFNOW, (quantized * 10000) >>> 0, 0.03, 0.1);
-    const result = quantized + jitter;
-    if (result < _perfLast) return _perfLast;
-    _perfLast = result;
-    return result;
-  }, "now");
-
-  // --- Shared helpers for coordinate/wheel noise ---
-  function _isEditableOrCanvas(target) {
-    if (!target) return false;
-    if (target instanceof HTMLInputElement) return true;
-    if (target instanceof HTMLTextAreaElement) return true;
-    if (target instanceof HTMLCanvasElement) return true;
-    if (target instanceof SVGElement) return true;
-    try { if (target.isContentEditable) return true; } catch(e) {}
-    return false;
-  }
-
-  const _hasDragEvent = typeof DragEvent !== "undefined";
-
-  // Skip noise for synthetic events, editable/canvas targets, and drags.
-  function _shouldSkipNoise(event) {
-    if (!event.isTrusted) return true;
-    if (_hasDragEvent && event instanceof DragEvent) return true;
-    if (_isEditableOrCanvas(event.target)) return true;
-    return false;
-  }
-
-  // --- MouseEvent coordinate noise + WheelEvent delta quantization ---
-  if (!_skipCoordNoise) {
-    // Save original coordinate getters
-    const _origCoordGetters = {};
-    for (const p of ["clientX", "clientY", "screenX", "screenY", "pageX", "pageY"]) {
-      const d = ORIG.getOwnPropertyDescriptor.call(Object, MouseEvent.prototype, p);
-      if (d && d.get) _origCoordGetters[p] = d.get;
+        return desc;
+      }, "getOwnPropertyDescriptor"), "getOwnPropertyDescriptor");
     }
-
-    // Per-event axis noise cache. One x-noise and one y-noise per event,
-    // derived from clientX/clientY position. All x-axis properties
-    // (clientX, pageX, screenX, x) share the same noise; same for y-axis.
-    // This preserves cross-property invariants (pageX - clientX = scrollX).
-    const _mouseCache = new WeakMap();
-
-    function _getEventNoise(event) {
-      let cached = _mouseCache.get(event);
-      if (cached) return cached;
-
-      if (_shouldSkipNoise(event)) {
-        cached = { nx: 0, ny: 0 };
-        _mouseCache.set(event, cached);
-        return cached;
-      }
-
-      const rx = _origCoordGetters.clientX ? _origCoordGetters.clientX.call(event) : 0;
-      const ry = _origCoordGetters.clientY ? _origCoordGetters.clientY.call(event) : 0;
-
-      // Gaussian coordinate noise: sigma=0.4, bound=1.0, then round.
-      // ~62% zero, ~19% +1, ~19% -1. Still ±1px max.
-      const gx = bioGaussian(bioSeed, BIO_SALT_MOUSE_X, rx | 0, 0.4, 1.0);
-      const gy = bioGaussian(bioSeed, BIO_SALT_MOUSE_Y, ry | 0, 0.4, 1.0);
-      cached = { nx: Math.round(gx), ny: Math.round(gy) };
-      _mouseCache.set(event, cached);
-      return cached;
-    }
-
-    // Override x-axis properties (all share same noise)
-    for (const prop of ["clientX", "pageX", "screenX"]) {
-      if (!_origCoordGetters[prop]) continue;
-      const origGet = _origCoordGetters[prop];
-      spoof(MouseEvent.prototype, prop, function() { return origGet.call(this) + _getEventNoise(this).nx; });
-    }
-
-    // Override y-axis properties (all share same noise)
-    for (const prop of ["clientY", "pageY", "screenY"]) {
-      if (!_origCoordGetters[prop]) continue;
-      const origGet = _origCoordGetters[prop];
-      spoof(MouseEvent.prototype, prop, function() { return origGet.call(this) + _getEventNoise(this).ny; });
-    }
-
-    // x/y are aliases for clientX/clientY — redirect to noised getters
-    for (const [alias, canonical] of [["x", "clientX"], ["y", "clientY"]]) {
-      const d = ORIG.getOwnPropertyDescriptor.call(Object, MouseEvent.prototype, alias);
-      if (d && d.get) {
-        spoof(MouseEvent.prototype, alias, function() { return this[canonical]; });
-      }
-    }
-
-    // WheelEvent delta quantization — round to nearest integer.
-    // Removes sub-pixel trackpad precision. Preserves sign and zero.
-    // Skipped for synthetic events, editable/canvas/SVG targets, drags.
-    for (const deltaProp of ["deltaY", "deltaX"]) {
-      const d = ORIG.getOwnPropertyDescriptor.call(Object, WheelEvent.prototype, deltaProp);
-      if (d && d.get) {
-        const origDeltaGet = d.get;
-        spoof(WheelEvent.prototype, deltaProp, function() {
-          const real = origDeltaGet.call(this);
-          if (real === 0) return 0;
-          if (_shouldSkipNoise(this)) return real;
-          return Math.sign(real) * Math.max(1, Math.round(Math.abs(real)));
-        });
-      }
-    }
+    return {
+      ORIG,
+      profile,
+      bioSeed,
+      sessionSeed,
+      currentTzOffset,
+      spoof,
+      disguise,
+      mulberry32,
+      _nativeStrings,
+      _spoofedProps
+    };
   }
-
-  // === Timezone spoofing (DST-aware) ===
-  ORIG.DateTimeFormat.prototype.resolvedOptions = disguise(function() {
-    const opts = ORIG.resolvedOptions.call(this);
-    opts.timeZone = profile.timezone;
-    return opts;
-  }, "resolvedOptions");
-
-  const tzProxy = new Proxy(ORIG.DateTimeFormat, {
-    construct(target, args) {
-      if (args[1]) { args[1].timeZone = profile.timezone; }
-      else { args[1] = { timeZone: profile.timezone }; }
-      return new target(...args);
-    },
-    apply(target, thisArg, args) {
-      if (args[1]) { args[1].timeZone = profile.timezone; }
-      else { args[1] = { timeZone: profile.timezone }; }
-      return target.apply(thisArg, args);
+  var init_core = __esm({
+    "src/content/anti-fingerprint/core.js"() {
+      __name(createContext, "createContext");
     }
   });
-  try {
-    ORIG.defineProperty.call(Object, Intl, "DateTimeFormat", {
-      value: tzProxy, writable: true, configurable: true,
+
+  // src/content/anti-fingerprint/navigator.js
+  function installNavigator(ctx) {
+    const { ORIG, profile, spoof, disguise } = ctx;
+    spoof(Navigator.prototype, "userAgent", () => profile.userAgent);
+    spoof(Navigator.prototype, "platform", () => profile.platform);
+    spoof(Navigator.prototype, "hardwareConcurrency", () => profile.hardwareConcurrency);
+    spoof(Navigator.prototype, "deviceMemory", () => profile.deviceMemory);
+    spoof(Navigator.prototype, "languages", () => Object.freeze([...profile.languages]));
+    spoof(Navigator.prototype, "language", () => profile.languages[0]);
+    spoof(Navigator.prototype, "webdriver", () => false);
+    spoof(Navigator.prototype, "vendor", () => profile.userAgent.includes("Firefox") ? "" : "Google Inc.");
+    spoof(Navigator.prototype, "appVersion", () => profile.userAgent.replace("Mozilla/", ""));
+    spoof(Navigator.prototype, "maxTouchPoints", () => 0);
+    spoof(Navigator.prototype, "globalPrivacyControl", () => true);
+    const _origReferrer = document.referrer;
+    spoof(Document.prototype, "referrer", () => {
+      if (!_origReferrer) return "";
+      try {
+        const refOrigin = new URL(_origReferrer).origin;
+        const curOrigin = location.origin;
+        if (refOrigin === curOrigin) return _origReferrer;
+        return refOrigin + "/";
+      } catch (e) {
+        return _origReferrer;
+      }
     });
-  } catch(e) {}
-
-  Date.prototype.getTimezoneOffset = disguise(function() {
-    return currentTzOffset;
-  }, "getTimezoneOffset");
-
-  // === WebRTC ===
-  // v2 item 10: Chrome privacy API sets webRTCIPHandlingPolicy to
-  // default_public_interface_only (background.js). This prevents ICE
-  // candidates from exposing private/local IPs without forcing relay-only
-  // (which is detectable and breaks apps without TURN — rowan pass 4
-  // finding #6). No MAIN-world RTCPeerConnection override needed.
-
-  // === enumerateDevices spoofing (v2 item 11) ===
-  // Returns a stable, low-entropy device list: one audioinput, one
-  // audiooutput, one videoinput. Device IDs are deterministic hex strings
-  // derived from the session seed. Labels are empty (matches browser
-  // behavior before getUserMedia permission is granted). groupId is shared
-  // across all devices (single-device-group, common on laptops).
-  //
-  // Stealth: no synthetic intermediate prototypes. Property getters are
-  // patched directly on MediaDeviceInfo.prototype via spoof() (GOPD
-  // normalization, native toString, getter.name all automatic). Devices
-  // are Object.create(NativeProto) with no own properties. Fresh object
-  // identities per call; stable values across calls.
-  if (typeof navigator !== 'undefined' && navigator.mediaDevices &&
-      typeof MediaDevices !== 'undefined' &&
-      typeof MediaDevices.prototype.enumerateDevices === 'function' &&
-      typeof MediaDeviceInfo !== 'undefined') {
-
-    // Deterministic device ID: 64-char hex from seed + kind string
-    function makeDeviceId(seed, kind) {
-      const rng = mulberry32(seed ^ hashStr(kind));
-      let hex = '';
-      for (let i = 0; i < 16; i++) {
-        hex += ((rng() * 0xFFFFFFFF) >>> 0).toString(16).padStart(8, '0');
+    try {
+      if (navigator.connection) {
+        spoof(Navigator.prototype, "connection", () => void 0);
       }
-      return hex.slice(0, 64);
+    } catch (e) {
     }
+    const chromeMatch = profile.userAgent.match(/Chrome\/(\d+)/);
+    const edgeMatch = profile.userAgent.match(/Edg\/(\d+)/);
+    if (chromeMatch && typeof NavigatorUAData !== "undefined") {
+      const chromeVer = chromeMatch[1];
+      const isEdge = !!edgeMatch;
+      const brands = isEdge ? [{ brand: "Microsoft Edge", version: edgeMatch[1] }, { brand: "Chromium", version: chromeVer }, { brand: "Not.A/Brand", version: "8" }] : [{ brand: "Google Chrome", version: chromeVer }, { brand: "Chromium", version: chromeVer }, { brand: "Not.A/Brand", version: "8" }];
+      const isMac = profile.platform === "MacIntel";
+      const isLinux = profile.platform.startsWith("Linux");
+      const uaPlatform = isMac ? "macOS" : isLinux ? "Linux" : "Windows";
+      const isAppleSilicon = profile.gpu.renderer.includes("Apple M");
+      const arch = isAppleSilicon ? "arm" : "x86";
+      const fakeUAData = {
+        brands,
+        mobile: false,
+        platform: uaPlatform,
+        toJSON() {
+          return { brands: this.brands, mobile: this.mobile, platform: this.platform };
+        },
+        getHighEntropyValues() {
+          return Promise.resolve({
+            brands,
+            mobile: false,
+            platform: uaPlatform,
+            platformVersion: isMac ? "15.5.0" : isLinux ? "6.8.0" : "15.0.0",
+            architecture: arch,
+            bitness: "64",
+            model: "",
+            uaFullVersion: `${chromeVer}.0.0.0`,
+            fullVersionList: brands.map((b) => ({ brand: b.brand, version: `${b.version}.0.0.0` })),
+            wow64: false
+          });
+        }
+      };
+      disguise(fakeUAData.getHighEntropyValues, "getHighEntropyValues");
+      disguise(fakeUAData.toJSON, "toJSON");
+      spoof(Navigator.prototype, "userAgentData", () => fakeUAData);
+    }
+    if (profile.userAgent.includes("Firefox") && !chromeMatch) {
+      spoof(Navigator.prototype, "userAgentData", () => void 0);
+    }
+  }
+  var init_navigator = __esm({
+    "src/content/anti-fingerprint/navigator.js"() {
+      __name(installNavigator, "installNavigator");
+    }
+  });
 
-    function hashStr(s) {
-      let h = 0;
-      for (let i = 0; i < s.length; i++) {
-        h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  // src/content/anti-fingerprint/screen.js
+  function installScreen(ctx) {
+    const { ORIG, profile, spoof, disguise, mulberry32 } = ctx;
+    spoof(Screen.prototype, "width", () => profile.screen.width);
+    spoof(Screen.prototype, "height", () => profile.screen.height);
+    spoof(Screen.prototype, "availWidth", () => profile.screen.width);
+    spoof(Screen.prototype, "availHeight", () => profile.screen.avail);
+    spoof(Screen.prototype, "colorDepth", () => profile.colorDepth);
+    spoof(Screen.prototype, "pixelDepth", () => profile.colorDepth);
+    spoof(Screen.prototype, "availLeft", () => 0);
+    spoof(Screen.prototype, "availTop", () => 0);
+    spoof(window, "screenX", () => 0);
+    spoof(window, "screenY", () => 0);
+    spoof(window, "screenLeft", () => 0);
+    spoof(window, "screenTop", () => 0);
+    const browserChrome = 80 + Math.floor(mulberry32(profile.canvasSeed)() * 40);
+    const innerW = profile.screen.width;
+    const innerH = profile.screen.height - browserChrome;
+    spoof(window, "innerWidth", () => innerW);
+    spoof(window, "innerHeight", () => innerH);
+    spoof(window, "outerWidth", () => profile.screen.width);
+    spoof(window, "outerHeight", () => profile.screen.height);
+    const spoofedDPR = profile.screen.width >= 3840 ? 2 : 1;
+    spoof(window, "devicePixelRatio", () => spoofedDPR);
+    if (typeof VisualViewport !== "undefined" && window.visualViewport) {
+      spoof(window.visualViewport, "width", () => innerW);
+      spoof(window.visualViewport, "height", () => innerH);
+      spoof(window.visualViewport, "scale", () => 1);
+    }
+    if (typeof window.matchMedia === "function") {
+      let parseLen = function(v) {
+        if (!v) return null;
+        const m = v.match(/^([\d.]+)\s*(px|em|rem|vw|vh|vmin|vmax|cm|mm|in|pt|pc)?$/);
+        if (!m) return null;
+        const n = parseFloat(m[1]);
+        switch (m[2] || "px") {
+          case "px":
+            return n;
+          case "em":
+          case "rem":
+            return n * 16;
+          case "vw":
+            return n * mq.width / 100;
+          case "vh":
+            return n * mq.height / 100;
+          case "vmin":
+            return n * Math.min(mq.width, mq.height) / 100;
+          case "vmax":
+            return n * Math.max(mq.width, mq.height) / 100;
+          case "cm":
+            return n * 96 / 2.54;
+          case "mm":
+            return n * 96 / 25.4;
+          case "in":
+            return n * 96;
+          case "pt":
+            return n * 96 / 72;
+          case "pc":
+            return n * 96 / 6;
+          default:
+            return null;
+        }
+      }, parseRes = function(v) {
+        if (!v) return null;
+        const m = v.match(/^([\d.]+)\s*(dppx|dpi|x)?$/);
+        if (!m) return null;
+        const n = parseFloat(m[1]);
+        if (!m[2]) return n;
+        return m[2] === "dpi" ? n / 96 : n;
+      }, parseRatio = function(v) {
+        if (!v) return null;
+        const parts = v.split("/").map((s) => parseFloat(s.trim()));
+        if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1]) || parts[1] === 0) return null;
+        return parts[0] / parts[1];
+      }, featureValue = function(feat) {
+        switch (feat) {
+          case "width":
+            return mq.width;
+          case "height":
+            return mq.height;
+          case "device-width":
+            return mq.deviceWidth;
+          case "device-height":
+            return mq.deviceHeight;
+          case "resolution":
+            return mq.dpr;
+          case "color":
+            return 8;
+          case "color-index":
+            return 0;
+          case "monochrome":
+            return 0;
+          case "aspect-ratio":
+            return mq.width / mq.height;
+          case "device-aspect-ratio":
+            return mq.deviceWidth / mq.deviceHeight;
+          default:
+            return void 0;
+        }
+      }, parseTarget = function(feat, valStr) {
+        if (feat === "resolution") return parseRes(valStr);
+        if (feat === "aspect-ratio" || feat === "device-aspect-ratio") return parseRatio(valStr);
+        return parseLen(valStr);
+      }, evalDiscrete = function(feat, val) {
+        switch (feat) {
+          case "pointer":
+          case "any-pointer":
+            return val ? { matches: val === "fine" } : { matches: true };
+          case "hover":
+          case "any-hover":
+            return val ? { matches: val === "hover" } : { matches: true };
+          case "orientation":
+            return val ? { matches: val === mq.orientation } : { matches: true };
+          case "display-mode":
+            return val ? { matches: val === "browser" } : { matches: true };
+          // Preference features — pass through to real matchMedia
+          case "prefers-color-scheme":
+          case "prefers-reduced-motion":
+          case "prefers-contrast":
+          case "forced-colors":
+          case "prefers-reduced-transparency":
+            return null;
+          default:
+            return null;
+        }
+      }, normalizeWebkitDPR = function(s) {
+        return s.replace(/-webkit-min-device-pixel-ratio/g, "min-resolution").replace(/-webkit-max-device-pixel-ratio/g, "max-resolution").replace(/-webkit-device-pixel-ratio/g, "resolution");
+      }, evalFeature = function(raw) {
+        const inner = normalizeWebkitDPR(raw.trim().replace(/^\(\s*/, "").replace(/\s*\)$/, "").trim());
+        const dbl = inner.match(
+          /^(.+?)\s*(<=|>=|<|>)\s*([a-z][a-z0-9-]*)\s*(<=|>=|<|>)\s*(.+)$/
+        );
+        if (dbl) {
+          const [, v1s, op1, feat2, op2, v2s] = dbl;
+          const actual2 = featureValue(feat2);
+          if (actual2 === void 0) return evalDiscrete(feat2, null);
+          const t1 = parseTarget(feat2, v1s.trim());
+          const t2 = parseTarget(feat2, v2s.trim());
+          if (t1 === null || t2 === null) {
+            return HARDWARE_FEATURES.has(feat2) ? { matches: false } : null;
+          }
+          let left;
+          if (op1 === "<") left = actual2 > t1;
+          else if (op1 === "<=") left = actual2 >= t1;
+          else if (op1 === ">") left = actual2 < t1;
+          else if (op1 === ">=") left = actual2 <= t1;
+          else left = false;
+          let right;
+          if (op2 === "<") right = actual2 < t2;
+          else if (op2 === "<=") right = actual2 <= t2;
+          else if (op2 === ">") right = actual2 > t2;
+          else if (op2 === ">=") right = actual2 >= t2;
+          else right = false;
+          return { matches: left && right };
+        }
+        const fov = inner.match(/^([a-z][a-z0-9-]*)\s*(<=|>=|<|>|=)\s*(.+)$/);
+        if (fov) {
+          const [, feat2, op, valStr] = fov;
+          const actual2 = featureValue(feat2);
+          if (actual2 === void 0) return evalDiscrete(feat2, op === "=" ? valStr.trim() : null);
+          const target = parseTarget(feat2, valStr.trim());
+          if (target === null) {
+            return HARDWARE_FEATURES.has(feat2) ? { matches: false } : null;
+          }
+          switch (op) {
+            case ">=":
+              return { matches: actual2 >= target };
+            case ">":
+              return { matches: actual2 > target };
+            case "<=":
+              return { matches: actual2 <= target };
+            case "<":
+              return { matches: actual2 < target };
+            case "=":
+              return { matches: actual2 === target };
+            default:
+              return null;
+          }
+        }
+        const vof = inner.match(/^(.+?)\s*(<=|>=|<|>|=)\s*([a-z][a-z0-9-]*)$/);
+        if (vof) {
+          const [, valStr, op, feat2] = vof;
+          const actual2 = featureValue(feat2);
+          if (actual2 === void 0) return evalDiscrete(feat2, op === "=" ? valStr.trim() : null);
+          const target = parseTarget(feat2, valStr.trim());
+          if (target === null) {
+            return HARDWARE_FEATURES.has(feat2) ? { matches: false } : null;
+          }
+          const revOps = { "<": ">", "<=": ">=", ">": "<", ">=": "<=", "=": "=" };
+          const rev = revOps[op];
+          switch (rev) {
+            case ">=":
+              return { matches: actual2 >= target };
+            case ">":
+              return { matches: actual2 > target };
+            case "<=":
+              return { matches: actual2 <= target };
+            case "<":
+              return { matches: actual2 < target };
+            case "=":
+              return { matches: actual2 === target };
+            default:
+              return null;
+          }
+        }
+        const legacy = inner.match(/^([a-z][a-z0-9-]*)\s*(?::\s*(.+))?$/);
+        if (!legacy) return null;
+        let feat = legacy[1];
+        const val = legacy[2] ? legacy[2].trim() : null;
+        let prefix = "";
+        if (feat.startsWith("min-")) {
+          prefix = "min";
+          feat = feat.slice(4);
+        } else if (feat.startsWith("max-")) {
+          prefix = "max";
+          feat = feat.slice(4);
+        }
+        const actual = featureValue(feat);
+        if (actual !== void 0) {
+          if (!val && !prefix) return { matches: actual > 0 };
+          const target = parseTarget(feat, val);
+          if (target === null) {
+            return HARDWARE_FEATURES.has(feat) ? { matches: false } : null;
+          }
+          if (prefix === "min") return { matches: actual >= target };
+          if (prefix === "max") return { matches: actual <= target };
+          return { matches: actual === target };
+        }
+        return evalDiscrete(feat, val);
+      }, evalQuery = function(query) {
+        const orClauses = query.split(",").map((s) => s.trim());
+        let anyNull = false;
+        for (const clause of orClauses) {
+          let work = clause.replace(/^\s*only\s+/i, "").replace(/^\s*(all|screen|print|speech)\s*/i, "").replace(/^\s*and\s+/i, "");
+          let invert = false;
+          if (/^\s*not\s+/i.test(clause)) {
+            invert = true;
+            work = clause.replace(/^\s*not\s+/i, "").replace(/^\s*(all|screen|print|speech)\s*/i, "").replace(/^\s*and\s+/i, "");
+          }
+          if (/^\s*(not\s+)?(print|speech)\b/i.test(clause)) {
+            if (!invert) continue;
+            return true;
+          }
+          const features = work.match(/\([^)]+\)/g);
+          if (!features || features.length === 0) {
+            if (invert) continue;
+            return true;
+          }
+          let clauseResult = true;
+          for (const feat of features) {
+            const result = evalFeature(feat);
+            if (result === null) {
+              anyNull = true;
+              clauseResult = false;
+              break;
+            }
+            if (result.matches === null) {
+              anyNull = true;
+              clauseResult = false;
+              break;
+            }
+            if (!result.matches) {
+              clauseResult = false;
+              break;
+            }
+          }
+          if (invert) clauseResult = !clauseResult;
+          if (clauseResult) return true;
+        }
+        if (anyNull) return null;
+        return false;
+      };
+      __name(parseLen, "parseLen");
+      __name(parseRes, "parseRes");
+      __name(parseRatio, "parseRatio");
+      __name(featureValue, "featureValue");
+      __name(parseTarget, "parseTarget");
+      __name(evalDiscrete, "evalDiscrete");
+      __name(normalizeWebkitDPR, "normalizeWebkitDPR");
+      __name(evalFeature, "evalFeature");
+      __name(evalQuery, "evalQuery");
+      const origMatchMedia = window.matchMedia.bind(window);
+      const mq = {
+        width: innerW,
+        height: innerH,
+        deviceWidth: profile.screen.width,
+        deviceHeight: profile.screen.height,
+        dpr: spoofedDPR,
+        colorBits: profile.colorDepth,
+        orientation: profile.screen.width >= profile.screen.height ? "landscape" : "portrait"
+      };
+      const HARDWARE_FEATURES = /* @__PURE__ */ new Set([
+        "width",
+        "height",
+        "device-width",
+        "device-height",
+        "aspect-ratio",
+        "device-aspect-ratio",
+        "resolution",
+        "color",
+        "color-index",
+        "monochrome"
+      ]);
+      window.matchMedia = disguise(function(query) {
+        const result = evalQuery(query);
+        if (result === null) {
+          return origMatchMedia(query);
+        }
+        const fakeList = Object.create(MediaQueryList.prototype);
+        Object.defineProperties(fakeList, {
+          matches: { get: /* @__PURE__ */ __name(() => result, "get"), enumerable: true },
+          media: { get: /* @__PURE__ */ __name(() => query, "get"), enumerable: true }
+        });
+        fakeList.addEventListener = function() {
+        };
+        fakeList.removeEventListener = function() {
+        };
+        fakeList.addListener = function() {
+        };
+        fakeList.removeListener = function() {
+        };
+        fakeList.dispatchEvent = function() {
+          return true;
+        };
+        return fakeList;
+      }, "matchMedia");
+    }
+  }
+  var init_screen = __esm({
+    "src/content/anti-fingerprint/screen.js"() {
+      __name(installScreen, "installScreen");
+    }
+  });
+
+  // src/content/anti-fingerprint/canvas.js
+  function installCanvas(ctx) {
+    const { ORIG, profile, disguise } = ctx;
+    function pixelNoise(seed, i, val) {
+      let h = seed ^ i * 2654435761;
+      h = (h ^ val * 2246822519) >>> 0;
+      h = Math.imul(h ^ h >>> 16, 73244475);
+      h = Math.imul(h ^ h >>> 16, 73244475);
+      h = (h ^ h >>> 16) >>> 0;
+      const magnitude = h >>> 1 & 3;
+      return h & 1 ? magnitude : -magnitude;
+    }
+    __name(pixelNoise, "pixelNoise");
+    function applyCanvasNoise(px, seed) {
+      for (let i = 0; i < px.length; i += 4) {
+        px[i] = Math.max(0, Math.min(255, px[i] + pixelNoise(seed, i, px[i])));
+        px[i + 1] = Math.max(0, Math.min(255, px[i + 1] + pixelNoise(seed, i + 1, px[i + 1])));
+        px[i + 2] = Math.max(0, Math.min(255, px[i + 2] + pixelNoise(seed, i + 2, px[i + 2])));
       }
-      return h;
     }
-
-    // Per-device value store — patched prototype getters read from here.
-    // Spoofed devices are registered; real devices fall through to the
-    // original native getter.
-    const _devData = new WeakMap();
-
-    const MDI = MediaDeviceInfo;
-    const IDI = typeof InputDeviceInfo !== 'undefined' ? InputDeviceInfo : null;
-
-    // Patch getters directly on MediaDeviceInfo.prototype via spoof().
-    // In Chrome, deviceId/groupId/kind/label getters live on
-    // MediaDeviceInfo.prototype (InputDeviceInfo inherits them).
-    // spoof() saves pristine descriptors → GOPD normalization automatic.
-    for (const prop of ['deviceId', 'groupId', 'kind', 'label']) {
-      const origGetter = (ORIG.getOwnPropertyDescriptor.call(Object, MDI.prototype, prop) || {}).get;
-      spoof(MDI.prototype, prop, function() {
-        const data = _devData.get(this);
-        if (data) return data[prop] || '';
-        // Real device — delegate to original native getter
-        if (origGetter) return origGetter.call(this);
-        return undefined;
+    __name(applyCanvasNoise, "applyCanvasNoise");
+    function noisyClone(src) {
+      const c = document.createElement("canvas");
+      c.width = src.width;
+      c.height = src.height;
+      const cctx = c.getContext("2d");
+      cctx.drawImage(src, 0, 0);
+      const id = ORIG.getImageData.call(cctx, 0, 0, c.width, c.height);
+      applyCanvasNoise(id.data, profile.canvasSeed);
+      cctx.putImageData(id, 0, 0);
+      return c;
+    }
+    __name(noisyClone, "noisyClone");
+    HTMLCanvasElement.prototype.toDataURL = disguise(function(...args) {
+      try {
+        if (this.width > 0 && this.height > 0)
+          return ORIG.toDataURL.apply(noisyClone(this), args);
+      } catch (e) {
+      }
+      return ORIG.toDataURL.apply(this, args);
+    }, "toDataURL");
+    HTMLCanvasElement.prototype.toBlob = disguise(function(cb, ...args) {
+      try {
+        if (this.width > 0 && this.height > 0)
+          return ORIG.toBlob.call(noisyClone(this), cb, ...args);
+      } catch (e) {
+      }
+      return ORIG.toBlob.call(this, cb, ...args);
+    }, "toBlob");
+    CanvasRenderingContext2D.prototype.getImageData = disguise(function(...args) {
+      const id = ORIG.getImageData.apply(this, args);
+      applyCanvasNoise(id.data, profile.canvasSeed);
+      return id;
+    }, "getImageData", 4);
+    const _fontProbeSet = /* @__PURE__ */ new Set([
+      // Top system fonts used by FingerprintJS, CreepJS, and font-enumeration scripts
+      "Arial",
+      "Verdana",
+      "Times New Roman",
+      "Georgia",
+      "Trebuchet MS",
+      "Courier New",
+      "Impact",
+      "Comic Sans MS",
+      "Palatino Linotype",
+      "Lucida Console",
+      "Lucida Sans Unicode",
+      "Tahoma",
+      "Century Gothic",
+      "Bookman Old Style",
+      "Garamond",
+      "MS Gothic",
+      "MS PGothic",
+      "MS Sans Serif",
+      "MS Serif",
+      "Wingdings",
+      "Webdings",
+      "Symbol",
+      "Segoe UI",
+      "Calibri",
+      "Cambria",
+      "Consolas",
+      "Candara",
+      "Franklin Gothic Medium",
+      "Copperplate Gothic Bold",
+      "Papyrus",
+      "Brush Script MT",
+      "Rockwell",
+      "Bodoni MT",
+      // macOS-specific probes
+      "Helvetica Neue",
+      "Menlo",
+      "Monaco",
+      "Optima",
+      "Futura",
+      "American Typewriter",
+      "Baskerville",
+      "Didot",
+      "Gill Sans",
+      // Linux probes
+      "DejaVu Sans",
+      "Liberation Sans",
+      "Ubuntu",
+      "Noto Sans"
+    ]);
+    function _isFontProbe(fontString) {
+      if (!fontString) return false;
+      const parts = fontString.split(/\d+(?:px|pt|em|rem|%)\s*/);
+      const familyPart = parts.length > 1 ? parts[parts.length - 1] : fontString;
+      const families = familyPart.split(",");
+      for (const f of families) {
+        const clean = f.trim().replace(/^['"]|['"]$/g, "");
+        if (_fontProbeSet.has(clean)) return true;
+      }
+      return false;
+    }
+    __name(_isFontProbe, "_isFontProbe");
+    const origMeasureText = CanvasRenderingContext2D.prototype.measureText;
+    CanvasRenderingContext2D.prototype.measureText = disguise(function(text) {
+      const metrics = origMeasureText.call(this, text);
+      let h = profile.canvasSeed;
+      const input = (text || "") + (this.font || "");
+      for (let i = 0; i < input.length; i++) {
+        h = Math.imul(h ^ input.charCodeAt(i), 1540483477);
+        h = (h ^ h >>> 15) >>> 0;
+      }
+      const isProbe = _isFontProbe(this.font);
+      const noise = isProbe ? (h % 1e3 - 500) / 1e3 : (h % 200 - 100) / 1e3;
+      return new Proxy(metrics, {
+        get(target, prop) {
+          if (prop === "width") return target.width + noise;
+          const val = target[prop];
+          return typeof val === "function" ? val.bind(target) : val;
+        }
       });
+    }, "measureText");
+    ctx.applyCanvasNoise = applyCanvasNoise;
+  }
+  var init_canvas = __esm({
+    "src/content/anti-fingerprint/canvas.js"() {
+      __name(installCanvas, "installCanvas");
     }
+  });
 
-    // Patch toJSON on MediaDeviceInfo.prototype — native toJSON reads
-    // this.deviceId etc, which hits our patched getters automatically.
-    // But the original toJSON may throw on spoofed objects that lack
-    // internal slots, so we intercept it.
-    const origToJSON = MDI.prototype.toJSON;
-    MDI.prototype.toJSON = disguise(function toJSON() {
-      if (_devData.has(this)) {
-        return { deviceId: this.deviceId, kind: this.kind,
-                 label: this.label, groupId: this.groupId };
+  // src/content/anti-fingerprint/webgl.js
+  function installWebGL(ctx) {
+    const { ORIG, profile, disguise, applyCanvasNoise } = ctx;
+    const GL_CAP_BUCKETS = {
+      apple: {
+        3379: 16384,
+        34076: 16384,
+        34024: 16384,
+        34921: 16,
+        34930: 4096,
+        35660: 16,
+        34929: 30,
+        34852: 1024,
+        35661: 16,
+        35658: 32,
+        viewportDims: [16384, 16384],
+        lineWidthRange: [1, 1],
+        pointSizeRange: [1, 255],
+        maxAnisotropy: 16
+      },
+      intel_low: {
+        3379: 16384,
+        34076: 16384,
+        34024: 16384,
+        34921: 16,
+        34930: 4096,
+        35660: 16,
+        34929: 30,
+        34852: 1024,
+        35661: 16,
+        35658: 32,
+        viewportDims: [16384, 16384],
+        lineWidthRange: [1, 7.375],
+        pointSizeRange: [1, 255],
+        maxAnisotropy: 16
+      },
+      intel_mid: {
+        3379: 16384,
+        34076: 16384,
+        34024: 16384,
+        34921: 16,
+        34930: 4096,
+        35660: 16,
+        34929: 30,
+        34852: 1024,
+        35661: 16,
+        35658: 32,
+        viewportDims: [32767, 32767],
+        lineWidthRange: [1, 7.375],
+        pointSizeRange: [1, 255],
+        maxAnisotropy: 16
+      },
+      nvidia_mid: {
+        3379: 16384,
+        34076: 16384,
+        34024: 16384,
+        34921: 16,
+        34930: 4096,
+        35660: 16,
+        34929: 32,
+        34852: 1024,
+        35661: 16,
+        35658: 32,
+        viewportDims: [32767, 32767],
+        lineWidthRange: [1, 1],
+        pointSizeRange: [1, 1024],
+        maxAnisotropy: 16
+      },
+      nvidia_high: {
+        3379: 32768,
+        34076: 32768,
+        34024: 32768,
+        34921: 16,
+        34930: 4096,
+        35660: 16,
+        34929: 32,
+        34852: 1024,
+        35661: 16,
+        35658: 32,
+        viewportDims: [32767, 32767],
+        lineWidthRange: [1, 1],
+        pointSizeRange: [1, 1024],
+        maxAnisotropy: 16
       }
-      if (origToJSON) return origToJSON.call(this);
-      return { deviceId: this.deviceId, kind: this.kind,
-               label: this.label, groupId: this.groupId };
-    }, 'toJSON', 0);
-
-    // Patch getCapabilities on InputDeviceInfo.prototype
-    if (IDI) {
-      const origGetCaps = (ORIG.getOwnPropertyDescriptor.call(Object, IDI.prototype, 'getCapabilities') || {}).value;
-      IDI.prototype.getCapabilities = disguise(function getCapabilities() {
-        if (_devData.has(this)) return {};
-        if (origGetCaps) return origGetCaps.call(this);
-        return {};
-      }, 'getCapabilities', 0);
+    };
+    function getCapBucket(renderer) {
+      if (/Apple\s+M[12]/.test(renderer)) return GL_CAP_BUCKETS.apple;
+      if (/Iris.*Plus/.test(renderer)) return GL_CAP_BUCKETS.apple;
+      if (/HD\s+Graphics\s+6[12]0/.test(renderer)) return GL_CAP_BUCKETS.intel_low;
+      if (/UHD\s+Graphics|Iris.*Xe/.test(renderer)) return GL_CAP_BUCKETS.intel_mid;
+      if (/RTX\s+4/.test(renderer)) return GL_CAP_BUCKETS.nvidia_high;
+      return GL_CAP_BUCKETS.nvidia_mid;
     }
-
-    // Stable device values — fresh wrapper objects created per call
-    const groupId = makeDeviceId(sessionSeed, 'group');
-    const deviceSpecs = [
-      { kind: 'audioinput',  deviceId: makeDeviceId(sessionSeed, 'audioinput'),  groupId: groupId, label: '' },
-      { kind: 'audiooutput', deviceId: makeDeviceId(sessionSeed, 'audiooutput'), groupId: groupId, label: '' },
-      { kind: 'videoinput',  deviceId: makeDeviceId(sessionSeed, 'videoinput'),  groupId: groupId, label: '' },
+    __name(getCapBucket, "getCapBucket");
+    const activeGlCaps = getCapBucket(profile.gpu.renderer);
+    function spoofGlGetParameter(origFn) {
+      return disguise(function(param) {
+        if (param === 37445) return profile.gpu.vendor;
+        if (param === 37446) return profile.gpu.renderer;
+        if (activeGlCaps[param] !== void 0) return activeGlCaps[param];
+        if (param === 3389) return new Int32Array(activeGlCaps.viewportDims);
+        if (param === 33902) return new Float32Array(activeGlCaps.lineWidthRange);
+        if (param === 33888) return new Float32Array(activeGlCaps.pointSizeRange);
+        if (param === 34047) return activeGlCaps.maxAnisotropy;
+        return origFn.call(this, param);
+      }, "getParameter");
+    }
+    __name(spoofGlGetParameter, "spoofGlGetParameter");
+    if (ORIG.glGetParameter) {
+      WebGLRenderingContext.prototype.getParameter = spoofGlGetParameter(ORIG.glGetParameter);
+    }
+    if (ORIG.gl2GetParameter) {
+      WebGL2RenderingContext.prototype.getParameter = spoofGlGetParameter(ORIG.gl2GetParameter);
+    }
+    const COMMON_WEBGL_EXTENSIONS = [
+      "ANGLE_instanced_arrays",
+      "EXT_blend_minmax",
+      "EXT_color_buffer_half_float",
+      "EXT_float_blend",
+      "EXT_frag_depth",
+      "EXT_shader_texture_lod",
+      "EXT_texture_filter_anisotropic",
+      "OES_element_index_uint",
+      "OES_standard_derivatives",
+      "OES_texture_float",
+      "OES_texture_float_linear",
+      "OES_texture_half_float",
+      "OES_texture_half_float_linear",
+      "OES_vertex_array_object",
+      "WEBGL_color_buffer_float",
+      "WEBGL_compressed_texture_s3tc",
+      "WEBGL_debug_renderer_info",
+      "WEBGL_depth_texture",
+      "WEBGL_draw_buffers",
+      "WEBGL_lose_context"
     ];
+    const spoofedGetSupportedExtensions = disguise(function() {
+      return [...COMMON_WEBGL_EXTENSIONS];
+    }, "getSupportedExtensions");
+    if (typeof WebGLRenderingContext !== "undefined") {
+      WebGLRenderingContext.prototype.getSupportedExtensions = spoofedGetSupportedExtensions;
+    }
+    if (typeof WebGL2RenderingContext !== "undefined") {
+      WebGL2RenderingContext.prototype.getSupportedExtensions = spoofedGetSupportedExtensions;
+    }
+    const COMMON_EXT_SET = new Set(COMMON_WEBGL_EXTENSIONS);
+    function spoofGetExtension(origFn) {
+      return disguise(function(name) {
+        if (!COMMON_EXT_SET.has(name)) return null;
+        if (name === "WEBGL_debug_renderer_info") {
+          const real = origFn.call(this, name);
+          if (real) return real;
+          return {
+            UNMASKED_VENDOR_WEBGL: 37445,
+            UNMASKED_RENDERER_WEBGL: 37446
+          };
+        }
+        if (name === "EXT_texture_filter_anisotropic") {
+          const real = origFn.call(this, name);
+          if (real) return real;
+          return {
+            TEXTURE_MAX_ANISOTROPY_EXT: 34046,
+            MAX_TEXTURE_MAX_ANISOTROPY_EXT: 34047
+          };
+        }
+        return origFn.call(this, name);
+      }, "getExtension");
+    }
+    __name(spoofGetExtension, "spoofGetExtension");
+    if (ORIG.glGetExtension) {
+      WebGLRenderingContext.prototype.getExtension = spoofGetExtension(ORIG.glGetExtension);
+    }
+    if (ORIG.gl2GetExtension) {
+      WebGL2RenderingContext.prototype.getExtension = spoofGetExtension(ORIG.gl2GetExtension);
+    }
+    function spoofGetShaderPrecisionFormat(origFn) {
+      return disguise(function(shaderType, precisionType) {
+        const real = origFn.call(this, shaderType, precisionType);
+        if (!real) return real;
+        ORIG.defineProperty.call(Object, real, "rangeMin", { value: 127, writable: false, enumerable: true, configurable: false });
+        ORIG.defineProperty.call(Object, real, "rangeMax", { value: 127, writable: false, enumerable: true, configurable: false });
+        ORIG.defineProperty.call(Object, real, "precision", { value: 23, writable: false, enumerable: true, configurable: false });
+        return real;
+      }, "getShaderPrecisionFormat");
+    }
+    __name(spoofGetShaderPrecisionFormat, "spoofGetShaderPrecisionFormat");
+    if (ORIG.glGetShaderPrecisionFormat) {
+      WebGLRenderingContext.prototype.getShaderPrecisionFormat = spoofGetShaderPrecisionFormat(ORIG.glGetShaderPrecisionFormat);
+    }
+    if (ORIG.gl2GetShaderPrecisionFormat) {
+      WebGL2RenderingContext.prototype.getShaderPrecisionFormat = spoofGetShaderPrecisionFormat(ORIG.gl2GetShaderPrecisionFormat);
+    }
+    function spoofGlReadPixels(origFn) {
+      return disguise(function(x, y, w, h, format, type, pixels) {
+        origFn.call(this, x, y, w, h, format, type, pixels);
+        if (pixels && format === 6408 && type === 5121) {
+          applyCanvasNoise(pixels, profile.canvasSeed);
+        }
+      }, "readPixels");
+    }
+    __name(spoofGlReadPixels, "spoofGlReadPixels");
+    if (ORIG.glReadPixels) {
+      WebGLRenderingContext.prototype.readPixels = spoofGlReadPixels(ORIG.glReadPixels);
+    }
+    if (ORIG.gl2ReadPixels) {
+      WebGL2RenderingContext.prototype.readPixels = spoofGlReadPixels(ORIG.gl2ReadPixels);
+    }
+    if (typeof OffscreenCanvas !== "undefined") {
+      OffscreenCanvas.prototype.convertToBlob = disguise(function(...args) {
+        try {
+          if (this.width > 0 && this.height > 0) {
+            const ocCtx = this.getContext("2d");
+            if (ocCtx) {
+              const getImageData = ORIG.offscreenGetImageData || ocCtx.getImageData.bind(ocCtx);
+              const id = getImageData.call(ocCtx, 0, 0, this.width, this.height);
+              applyCanvasNoise(id.data, profile.canvasSeed);
+              const tmp = new OffscreenCanvas(this.width, this.height);
+              const tmpCtx = tmp.getContext("2d");
+              tmpCtx.putImageData(id, 0, 0);
+              return ORIG.offscreenConvertToBlob.apply(tmp, args);
+            }
+          }
+        } catch (e) {
+        }
+        return ORIG.offscreenConvertToBlob.apply(this, args);
+      }, "convertToBlob");
+      if (typeof OffscreenCanvasRenderingContext2D !== "undefined" && ORIG.offscreenGetImageData) {
+        OffscreenCanvasRenderingContext2D.prototype.getImageData = disguise(function(...args) {
+          const id = ORIG.offscreenGetImageData.apply(this, args);
+          applyCanvasNoise(id.data, profile.canvasSeed);
+          return id;
+        }, "getImageData", 4);
+      }
+    }
+  }
+  var init_webgl = __esm({
+    "src/content/anti-fingerprint/webgl.js"() {
+      __name(installWebGL, "installWebGL");
+    }
+  });
 
-    // Patch at prototype level (not instance) — native location.
-    // Each call creates fresh device objects (distinct identity) with
-    // stable values (same deviceId/groupId/kind/label).
-    MediaDevices.prototype.enumerateDevices = disguise(function enumerateDevices() {
-      const devices = deviceSpecs.map(function(spec) {
-        const isInput = spec.kind === 'audioinput' || spec.kind === 'videoinput';
-        const proto = isInput && IDI ? IDI.prototype : MDI.prototype;
-        const dev = Object.create(proto);
-        _devData.set(dev, spec);
-        return dev;
+  // src/content/anti-fingerprint/audio.js
+  function installAudio(ctx) {
+    const { ORIG, profile, spoof, disguise } = ctx;
+    if (ORIG.getChannelData) {
+      const _noisedBuffers = /* @__PURE__ */ new WeakMap();
+      AudioBuffer.prototype.getChannelData = disguise(function(channel) {
+        const data = ORIG.getChannelData.call(this, channel);
+        let noised = _noisedBuffers.get(this);
+        if (!noised) {
+          noised = /* @__PURE__ */ new Set();
+          _noisedBuffers.set(this, noised);
+        }
+        if (noised.has(channel)) return data;
+        noised.add(channel);
+        const seed = profile.audioSeed ^ channel * 2654435769;
+        for (let i = 0; i < data.length; i++) {
+          let h = seed ^ i * 2654435761;
+          h = Math.imul(h ^ data[i] * 1e6 >>> 0, 73244475);
+          h = (h ^ h >>> 16) >>> 0;
+          data[i] += (h % 200 - 100) * 5e-7;
+        }
+        return data;
+      }, "getChannelData");
+    }
+    if (typeof DeviceMotionEvent !== "undefined") {
+      spoof(DeviceMotionEvent.prototype, "acceleration", () => null);
+      spoof(DeviceMotionEvent.prototype, "accelerationIncludingGravity", () => null);
+      spoof(DeviceMotionEvent.prototype, "rotationRate", () => null);
+      spoof(DeviceMotionEvent.prototype, "interval", () => 0);
+    }
+    if (typeof DeviceOrientationEvent !== "undefined") {
+      spoof(DeviceOrientationEvent.prototype, "alpha", () => null);
+      spoof(DeviceOrientationEvent.prototype, "beta", () => null);
+      spoof(DeviceOrientationEvent.prototype, "gamma", () => null);
+      spoof(DeviceOrientationEvent.prototype, "absolute", () => false);
+    }
+    const _sensorClasses = [
+      "Accelerometer",
+      "Gyroscope",
+      "LinearAccelerationSensor",
+      "AbsoluteOrientationSensor",
+      "RelativeOrientationSensor",
+      "GravitySensor",
+      "Magnetometer",
+      "AmbientLightSensor"
+    ];
+    const _sensorProps = ["x", "y", "z", "quaternion", "illuminance"];
+    for (const cls of _sensorClasses) {
+      if (typeof window[cls] !== "undefined") {
+        for (const prop of _sensorProps) {
+          spoof(window[cls].prototype, prop, () => null);
+        }
+      }
+    }
+    if (ORIG.audioConnect) {
+      AudioNode.prototype.connect = disguise(/* @__PURE__ */ __name(function connect(destination, output, input) {
+        if (destination instanceof AudioDestinationNode || destination instanceof AnalyserNode) {
+          try {
+            const audioCtx = this.context || destination.context;
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = "highshelf";
+            filter.frequency.value = 17999;
+            filter.Q.value = 0;
+            filter.gain.value = -70;
+            ORIG.audioConnect.call(this, filter, output, 0);
+            return ORIG.audioConnect.call(filter, destination, 0, input);
+          } catch (e) {
+            return ORIG.audioConnect.call(this, destination, output, input);
+          }
+        }
+        return ORIG.audioConnect.call(this, destination, output, input);
+      }, "connect"), "connect", 1);
+    }
+  }
+  var init_audio = __esm({
+    "src/content/anti-fingerprint/audio.js"() {
+      __name(installAudio, "installAudio");
+    }
+  });
+
+  // src/content/anti-fingerprint/biometric.js
+  function installBiometric(ctx) {
+    const { ORIG, profile, bioSeed, spoof, disguise } = ctx;
+    const BIO_SALT_TIMESTAMP = 1414090053;
+    const BIO_SALT_PERFNOW = 1346720326;
+    const BIO_SALT_MOUSE_X = 1297635416;
+    const BIO_SALT_MOUSE_Y = 1297701209;
+    function bioGaussian(seed, salt, inputHash, sigma, bound) {
+      let h1 = seed ^ salt ^ inputHash;
+      h1 = Math.imul(h1 ^ h1 >>> 16, 73244475);
+      h1 = Math.imul(h1 ^ h1 >>> 16, 73244475);
+      h1 = (h1 ^ h1 >>> 16) >>> 0;
+      let h2 = seed ^ Math.imul(salt, 2654435769) ^ inputHash;
+      h2 = Math.imul(h2 ^ h2 >>> 16, 73244475);
+      h2 = Math.imul(h2 ^ h2 >>> 16, 73244475);
+      h2 = (h2 ^ h2 >>> 16) >>> 0;
+      const u1 = (h1 + 1) / 4294967297;
+      const u2 = (h2 + 1) / 4294967297;
+      let z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2) * sigma;
+      if (z > bound) z = bound;
+      if (z < -bound) z = -bound;
+      return z;
+    }
+    __name(bioGaussian, "bioGaussian");
+    const _bioCoordSkip = /* @__PURE__ */ new Set([
+      "docs.google.com",
+      "sheets.google.com",
+      "slides.google.com",
+      "figma.com",
+      "www.figma.com",
+      "maps.google.com",
+      "www.openstreetmap.org",
+      "excalidraw.com",
+      "www.canva.com"
+    ]);
+    const _skipCoordNoise = _bioCoordSkip.has(location.hostname);
+    const _origTSDesc = ORIG.getOwnPropertyDescriptor.call(Object, Event.prototype, "timeStamp");
+    if (_origTSDesc && _origTSDesc.get) {
+      const _tsCache = /* @__PURE__ */ new WeakMap();
+      spoof(Event.prototype, "timeStamp", function() {
+        const cached = _tsCache.get(this);
+        if (cached !== void 0) return cached;
+        const real = _origTSDesc.get.call(this);
+        if (!this.isTrusted) {
+          _tsCache.set(this, real);
+          return real;
+        }
+        const jitter = bioGaussian(bioSeed, BIO_SALT_TIMESTAMP, real * 1e3 >>> 0, 0.5, 1);
+        const result = real + jitter;
+        _tsCache.set(this, result);
+        return result;
       });
-      return ORIG.promiseResolve.call(Promise, devices);
-    }, 'enumerateDevices', 0);
+    }
+    const _origPerfNow = Performance.prototype.now;
+    let _perfLast = 0;
+    Performance.prototype.now = disguise(function() {
+      const real = _origPerfNow.call(this);
+      const quantized = Math.round(real * 10) / 10;
+      const jitter = bioGaussian(bioSeed, BIO_SALT_PERFNOW, quantized * 1e4 >>> 0, 0.03, 0.1);
+      const result = quantized + jitter;
+      if (result < _perfLast) return _perfLast;
+      _perfLast = result;
+      return result;
+    }, "now");
+    function _isEditableOrCanvas(target) {
+      if (!target) return false;
+      if (target instanceof HTMLInputElement) return true;
+      if (target instanceof HTMLTextAreaElement) return true;
+      if (target instanceof HTMLCanvasElement) return true;
+      if (target instanceof SVGElement) return true;
+      try {
+        if (target.isContentEditable) return true;
+      } catch (e) {
+      }
+      return false;
+    }
+    __name(_isEditableOrCanvas, "_isEditableOrCanvas");
+    const _hasDragEvent = typeof DragEvent !== "undefined";
+    function _shouldSkipNoise(event) {
+      if (!event.isTrusted) return true;
+      if (_hasDragEvent && event instanceof DragEvent) return true;
+      if (_isEditableOrCanvas(event.target)) return true;
+      return false;
+    }
+    __name(_shouldSkipNoise, "_shouldSkipNoise");
+    if (!_skipCoordNoise) {
+      let _getEventNoise = function(event) {
+        let cached = _mouseCache.get(event);
+        if (cached) return cached;
+        if (_shouldSkipNoise(event)) {
+          cached = { nx: 0, ny: 0 };
+          _mouseCache.set(event, cached);
+          return cached;
+        }
+        const rx = _origCoordGetters.clientX ? _origCoordGetters.clientX.call(event) : 0;
+        const ry = _origCoordGetters.clientY ? _origCoordGetters.clientY.call(event) : 0;
+        const gx = bioGaussian(bioSeed, BIO_SALT_MOUSE_X, rx | 0, 0.4, 1);
+        const gy = bioGaussian(bioSeed, BIO_SALT_MOUSE_Y, ry | 0, 0.4, 1);
+        cached = { nx: Math.round(gx), ny: Math.round(gy) };
+        _mouseCache.set(event, cached);
+        return cached;
+      };
+      __name(_getEventNoise, "_getEventNoise");
+      const _origCoordGetters = {};
+      for (const p of ["clientX", "clientY", "screenX", "screenY", "pageX", "pageY"]) {
+        const d = ORIG.getOwnPropertyDescriptor.call(Object, MouseEvent.prototype, p);
+        if (d && d.get) _origCoordGetters[p] = d.get;
+      }
+      const _mouseCache = /* @__PURE__ */ new WeakMap();
+      for (const prop of ["clientX", "pageX", "screenX"]) {
+        if (!_origCoordGetters[prop]) continue;
+        const origGet = _origCoordGetters[prop];
+        spoof(MouseEvent.prototype, prop, function() {
+          return origGet.call(this) + _getEventNoise(this).nx;
+        });
+      }
+      for (const prop of ["clientY", "pageY", "screenY"]) {
+        if (!_origCoordGetters[prop]) continue;
+        const origGet = _origCoordGetters[prop];
+        spoof(MouseEvent.prototype, prop, function() {
+          return origGet.call(this) + _getEventNoise(this).ny;
+        });
+      }
+      for (const [alias, canonical] of [["x", "clientX"], ["y", "clientY"]]) {
+        const d = ORIG.getOwnPropertyDescriptor.call(Object, MouseEvent.prototype, alias);
+        if (d && d.get) {
+          spoof(MouseEvent.prototype, alias, function() {
+            return this[canonical];
+          });
+        }
+      }
+      for (const deltaProp of ["deltaY", "deltaX"]) {
+        const d = ORIG.getOwnPropertyDescriptor.call(Object, WheelEvent.prototype, deltaProp);
+        if (d && d.get) {
+          const origDeltaGet = d.get;
+          spoof(WheelEvent.prototype, deltaProp, function() {
+            const real = origDeltaGet.call(this);
+            if (real === 0) return 0;
+            if (_shouldSkipNoise(this)) return real;
+            return Math.sign(real) * Math.max(1, Math.round(Math.abs(real)));
+          });
+        }
+      }
+    }
+    if (typeof BatteryManager !== "undefined") {
+      spoof(BatteryManager.prototype, "charging", function() {
+        return true;
+      });
+      spoof(BatteryManager.prototype, "chargingTime", function() {
+        return 0;
+      });
+      spoof(BatteryManager.prototype, "dischargingTime", function() {
+        return Infinity;
+      });
+      spoof(BatteryManager.prototype, "level", function() {
+        return 1;
+      });
+    }
   }
+  var init_biometric = __esm({
+    "src/content/anti-fingerprint/biometric.js"() {
+      __name(installBiometric, "installBiometric");
+    }
+  });
 
-  // === Battery Status API spoofing (v3 item 5c) ===
-  // navigator.getBattery() returns charging state, level, charging/discharging
-  // time. Deprecated but still available in Chrome. High-entropy surface.
-  // Spoofed to lowest-entropy state: fully charged on AC power.
-  //
-  // Native shape preserved: BatteryManager inherits from EventTarget.
-  // Properties (charging, level, chargingTime, dischargingTime) are getters
-  // on BatteryManager.prototype. Event methods (addEventListener etc.)
-  // inherited from EventTarget.prototype. We spoof the getters on the
-  // prototype via spoof() — same pattern as navigator properties. GOPD
-  // normalization, toString hardening, getter.name all automatic via spoof().
-  // getBattery() is NOT overridden; it returns the real BatteryManager
-  // instance whose prototype getters now return fixed values.
-  // No fake objects, no own properties, native prototype chain preserved.
-  if (typeof BatteryManager !== 'undefined') {
-    spoof(BatteryManager.prototype, 'charging', function() { return true; });
-    spoof(BatteryManager.prototype, 'chargingTime', function() { return 0; });
-    spoof(BatteryManager.prototype, 'dischargingTime', function() { return Infinity; });
-    spoof(BatteryManager.prototype, 'level', function() { return 1.0; });
-  }
-
-  // === Worker navigator override script ===
-  // Shared by Worker, Module Worker, and SharedWorker wrappers below.
-  // Hoisted here so it's in scope for all three constructor intercepts.
-  const workerOverrides = `
+  // src/content/anti-fingerprint/misc.js
+  function installMisc(ctx) {
+    const { ORIG, profile, sessionSeed, currentTzOffset, spoof, disguise, mulberry32 } = ctx;
+    ORIG.DateTimeFormat.prototype.resolvedOptions = disguise(function() {
+      const opts = ORIG.resolvedOptions.call(this);
+      opts.timeZone = profile.timezone;
+      return opts;
+    }, "resolvedOptions");
+    const tzProxy = new Proxy(ORIG.DateTimeFormat, {
+      construct(target, args) {
+        if (args[1]) {
+          args[1].timeZone = profile.timezone;
+        } else {
+          args[1] = { timeZone: profile.timezone };
+        }
+        return new target(...args);
+      },
+      apply(target, thisArg, args) {
+        if (args[1]) {
+          args[1].timeZone = profile.timezone;
+        } else {
+          args[1] = { timeZone: profile.timezone };
+        }
+        return target.apply(thisArg, args);
+      }
+    });
+    try {
+      ORIG.defineProperty.call(Object, Intl, "DateTimeFormat", {
+        value: tzProxy,
+        writable: true,
+        configurable: true
+      });
+    } catch (e) {
+    }
+    Date.prototype.getTimezoneOffset = disguise(function() {
+      return currentTzOffset;
+    }, "getTimezoneOffset");
+    if (typeof navigator !== "undefined" && navigator.mediaDevices && typeof MediaDevices !== "undefined" && typeof MediaDevices.prototype.enumerateDevices === "function" && typeof MediaDeviceInfo !== "undefined") {
+      let makeDeviceId = function(seed, kind) {
+        const rng = mulberry32(seed ^ hashStr(kind));
+        let hex = "";
+        for (let i = 0; i < 16; i++) {
+          hex += (rng() * 4294967295 >>> 0).toString(16).padStart(8, "0");
+        }
+        return hex.slice(0, 64);
+      }, hashStr = function(s) {
+        let h = 0;
+        for (let i = 0; i < s.length; i++) {
+          h = (h << 5) - h + s.charCodeAt(i) | 0;
+        }
+        return h;
+      };
+      __name(makeDeviceId, "makeDeviceId");
+      __name(hashStr, "hashStr");
+      const _devData = /* @__PURE__ */ new WeakMap();
+      const MDI = MediaDeviceInfo;
+      const IDI = typeof InputDeviceInfo !== "undefined" ? InputDeviceInfo : null;
+      for (const prop of ["deviceId", "groupId", "kind", "label"]) {
+        const origGetter = (ORIG.getOwnPropertyDescriptor.call(Object, MDI.prototype, prop) || {}).get;
+        spoof(MDI.prototype, prop, function() {
+          const data = _devData.get(this);
+          if (data) return data[prop] || "";
+          if (origGetter) return origGetter.call(this);
+          return void 0;
+        });
+      }
+      const origToJSON = MDI.prototype.toJSON;
+      MDI.prototype.toJSON = disguise(/* @__PURE__ */ __name(function toJSON() {
+        if (_devData.has(this)) {
+          return {
+            deviceId: this.deviceId,
+            kind: this.kind,
+            label: this.label,
+            groupId: this.groupId
+          };
+        }
+        if (origToJSON) return origToJSON.call(this);
+        return {
+          deviceId: this.deviceId,
+          kind: this.kind,
+          label: this.label,
+          groupId: this.groupId
+        };
+      }, "toJSON"), "toJSON", 0);
+      if (IDI) {
+        const origGetCaps = (ORIG.getOwnPropertyDescriptor.call(Object, IDI.prototype, "getCapabilities") || {}).value;
+        IDI.prototype.getCapabilities = disguise(/* @__PURE__ */ __name(function getCapabilities() {
+          if (_devData.has(this)) return {};
+          if (origGetCaps) return origGetCaps.call(this);
+          return {};
+        }, "getCapabilities"), "getCapabilities", 0);
+      }
+      const groupId = makeDeviceId(sessionSeed, "group");
+      const deviceSpecs = [
+        { kind: "audioinput", deviceId: makeDeviceId(sessionSeed, "audioinput"), groupId, label: "" },
+        { kind: "audiooutput", deviceId: makeDeviceId(sessionSeed, "audiooutput"), groupId, label: "" },
+        { kind: "videoinput", deviceId: makeDeviceId(sessionSeed, "videoinput"), groupId, label: "" }
+      ];
+      MediaDevices.prototype.enumerateDevices = disguise(/* @__PURE__ */ __name(function enumerateDevices() {
+        const devices = deviceSpecs.map(function(spec) {
+          const isInput = spec.kind === "audioinput" || spec.kind === "videoinput";
+          const proto = isInput && IDI ? IDI.prototype : MDI.prototype;
+          const dev = Object.create(proto);
+          _devData.set(dev, spec);
+          return dev;
+        });
+        return ORIG.promiseResolve.call(Promise, devices);
+      }, "enumerateDevices"), "enumerateDevices", 0);
+    }
+    const workerOverrides = `
     Object.defineProperty(self.navigator.__proto__, "userAgent", { get: () => ${JSON.stringify(profile.userAgent)} });
     Object.defineProperty(self.navigator.__proto__, "platform", { get: () => ${JSON.stringify(profile.platform)} });
     Object.defineProperty(self.navigator.__proto__, "hardwareConcurrency", { get: () => ${profile.hardwareConcurrency} });
@@ -1714,171 +1545,81 @@
     Object.defineProperty(self.navigator.__proto__, "languages", { get: () => Object.freeze(${JSON.stringify(profile.languages)}) });
     Object.defineProperty(self.navigator.__proto__, "appVersion", { get: () => ${JSON.stringify(profile.userAgent.replace("Mozilla/", ""))} });
   `;
-
-  // === Web Worker scope leak prevention ===
-  // Workers run in a separate global scope with unspoofed navigator.
-  // Intercept Worker constructor to inject a wrapper that overrides
-  // navigator properties inside the worker.
-  if (typeof Worker !== "undefined") {
-    const OrigWorker = Worker;
-
-    window.Worker = disguise(function(url, opts) {
-      const isModule = opts && opts.type === "module";
-      try {
-        const origUrl = new URL(url, location.href).href;
-        if (isModule) {
-          // Module workers: can't use importScripts(). Prepend overrides,
-          // then re-import the original script via dynamic import().
-          // Blob URLs have opaque origins, so static `import "..."` with
-          // relative paths would break. Dynamic import() with an absolute
-          // URL works because it resolves against the network, not the blob origin.
-          const blob = new Blob(
-            [workerOverrides + `;\nawait import(${JSON.stringify(origUrl)});`],
-            { type: "application/javascript" }
-          );
-          return new OrigWorker(URL.createObjectURL(blob), { ...opts, type: "module" });
-        } else {
-          // Classic workers: prepend overrides, importScripts the original
-          const blob = new Blob(
-            [workerOverrides + `;\nimportScripts(${JSON.stringify(origUrl)});`],
-            { type: "application/javascript" }
-          );
-          return new OrigWorker(URL.createObjectURL(blob), opts);
+    if (typeof Worker !== "undefined") {
+      const OrigWorker = Worker;
+      window.Worker = disguise(function(url, opts) {
+        const isModule = opts && opts.type === "module";
+        try {
+          const origUrl = new URL(url, location.href).href;
+          if (isModule) {
+            const blob = new Blob(
+              [workerOverrides + `;
+await import(${JSON.stringify(origUrl)});`],
+              { type: "application/javascript" }
+            );
+            return new OrigWorker(URL.createObjectURL(blob), { ...opts, type: "module" });
+          } else {
+            const blob = new Blob(
+              [workerOverrides + `;
+importScripts(${JSON.stringify(origUrl)});`],
+              { type: "application/javascript" }
+            );
+            return new OrigWorker(URL.createObjectURL(blob), opts);
+          }
+        } catch (e) {
+          return new OrigWorker(url, opts);
         }
-      } catch(e) {
-        // Fallback: if Blob approach fails, use original unspoofed
-        return new OrigWorker(url, opts);
-      }
-    }, "Worker", 1);
-    window.Worker.prototype = OrigWorker.prototype;
+      }, "Worker", 1);
+      window.Worker.prototype = OrigWorker.prototype;
+    }
+    if (typeof SharedWorker !== "undefined") {
+      const OrigSharedWorker = SharedWorker;
+      window.SharedWorker = disguise(function(url, nameOrOpts) {
+        try {
+          const origUrl = new URL(url, location.href).href;
+          const blob = new Blob(
+            [workerOverrides + `;
+importScripts(${JSON.stringify(origUrl)});`],
+            { type: "application/javascript" }
+          );
+          return new OrigSharedWorker(URL.createObjectURL(blob), nameOrOpts);
+        } catch (e) {
+          return new OrigSharedWorker(url, nameOrOpts);
+        }
+      }, "SharedWorker", 1);
+      window.SharedWorker.prototype = OrigSharedWorker.prototype;
+    }
   }
+  var init_misc = __esm({
+    "src/content/anti-fingerprint/misc.js"() {
+      __name(installMisc, "installMisc");
+    }
+  });
 
-  // === SharedWorker scope leak prevention ===
-  // SharedWorkers share a single global scope across tabs. Intercept
-  // the constructor to inject navigator overrides the same way.
-  if (typeof SharedWorker !== "undefined") {
-    const OrigSharedWorker = SharedWorker;
-    window.SharedWorker = disguise(function(url, nameOrOpts) {
-      try {
-        const origUrl = new URL(url, location.href).href;
-        // SharedWorkers are always classic (no module support in most browsers).
-        // Use importScripts to load the original script after overrides.
-        const blob = new Blob(
-          [workerOverrides + `;\nimportScripts(${JSON.stringify(origUrl)});`],
-          { type: "application/javascript" }
-        );
-        return new OrigSharedWorker(URL.createObjectURL(blob), nameOrOpts);
-      } catch(e) {
-        return new OrigSharedWorker(url, nameOrOpts);
-      }
-    }, "SharedWorker", 1);
-    window.SharedWorker.prototype = OrigSharedWorker.prototype;
-  }
-
-  // === NO postMessage, NO message listener ===
-  // The seed is NOT broadcast via postMessage (lux review: any tracker
-  // script could listen for it and use it as a tracking identifier).
-  // Instead, bridge.js reads sessionStorage.__pg_seed__ directly — the
-  // ISOLATED world shares sessionStorage with the MAIN world.
-  // Overrides are immutable for the lifetime of the page.
-  // Rotation = background.js clears sessionStorage seed + reloads tabs.
-  // Disable = background.js sets cookie __pgd via chrome.scripting.
-  //
-  // Known detection surfaces (v2):
-  // - sessionStorage.__pg_seed__ readable by same-origin page JS
-  // - document.cookie __pgd readable by page JS (JS cookies can't be httpOnly)
-  // - Classic + Module Workers: navigator spoofed via blob wrapper
-  // - SharedWorker: navigator spoofed via blob wrapper
-  // - ServiceWorker: NOT covered (registered via navigator.serviceWorker.register,
-  //   runs in a separate registration scope that content scripts cannot intercept)
-  // - Worklets (AudioWorklet, PaintWorklet): NOT covered (lowest priority).
-  //   AudioWorklet processors are also exempt from ultrasonic filtering
-  //   (they run in a separate thread, not patchable from content script).
-  // - matchMedia: full evaluator for dimension/resolution/interaction
-  //   features. Preference features (prefers-color-scheme, etc.) pass
-  //   through to real matchMedia to avoid breaking dark mode / a11y.
-  // - Module Worker caveat: blob URLs have opaque origins. Dynamic import()
-  //   of the original script URL works for same-origin scripts but will fail
-  //   for cross-origin worker scripts that don't serve CORS headers.
-  // - Worker blob: URL detection (lux review): self.location.href inside a
-  //   wrapped worker returns blob:https://... instead of the original script
-  //   URL. Sophisticated trackers (FingerprintJS) could inspect self.location
-  //   to detect dynamic wrapping. Phase 2 consideration.
-  // - Sensor API: DeviceMotion/Orientation events and Generic Sensor API
-  //   (Accelerometer, Gyroscope, etc.) return null readings, matching a
-  //   standard desktop without MEMS sensors. Convertible laptop hardware
-  //   (Surface Pro) is masked. API constructors preserved (removal is itself
-  //   a fingerprinting signal).
-  // - WebAudio ultrasonic: BiquadFilterNode highshelf at 17999 Hz / -70 dB
-  //   inserted before AudioDestinationNode AND AnalyserNode. Attenuates
-  //   UXDT cross-device beacons (18-20 kHz) and prevents upstream FFT
-  //   analysis of ultrasonic content. AudioWorklet-based processing is
-  //   NOT covered. MediaStreamAudioDestinationNode is NOT covered (used
-  //   for recording/WebRTC output, not speaker output — documented bypass).
-  //   Per-site bypass via __pgd cookie for legitimate near-ultrasonic use.
-  // - Behavioral biometrics (v2 item 3): precision-reduction layer.
-  //   Event.timeStamp: ±1ms deterministic jitter, bounded (>2ms apart cannot
-  //   invert), stable re-reads via WeakMap. Synthetic events (isTrusted=false)
-  //   bypass jitter — modifying constructor-controlled values is a detection
-  //   oracle.
-  //   performance.now(): 0.1ms quantization + Gaussian jitter (±0.1ms max),
-  //   monotonic-clamped to prevent backward movement.
-  //   MouseEvent clientX/Y/screenX/Y/pageX/Y/x/y: ±0-1px Gaussian per-axis
-  //   noise (all x-props share one noise, all y-props share another — preserves
-  //   pageX-clientX=scrollX invariant). Skipped on synthetic events, editable
-  //   elements, canvas, SVG, drag events, and allowlisted sites (Google Docs,
-  //   Figma, Google Maps, OpenStreetMap, Excalidraw, Canva).
-  //   WheelEvent deltaY/X: integer quantization removes sub-pixel
-  //   trackpad precision, same skip contract as MouseEvent. This is precision
-  //   reduction, NOT biometric spoofing — raises classifier cost, does not
-  //   synthesize a different human.
-  // - OffscreenCanvas (v2 item 5): convertToBlob and getImageData apply
-  //   same pixelNoise pipeline as HTMLCanvasElement. convertToBlob exports
-  //   from a temporary OffscreenCanvas clone — the caller's canvas is never
-  //   mutated, preventing noise compounding on repeated calls and
-  //   before/after detection via getImageData. 2D context path only; if
-  //   the OffscreenCanvas has a WebGL context, getContext("2d") returns
-  //   null and the wrapper falls through to the original unnoised export.
-  //   WebGL-rendered OffscreenCanvas exports are covered by the readPixels
-  //   override (same prototype chain) but NOT by convertToBlob.
-  // - WebGL readPixels (v2 item 5): RGBA/UNSIGNED_BYTE reads get pixelNoise
-  //   applied in-place. Other format/type combos (FLOAT, HALF_FLOAT, depth,
-  //   stencil) are rendering-critical and pass through unmodified. Covers
-  //   both WebGLRenderingContext and WebGL2RenderingContext.
-  // - toString/descriptor hardening (v2 item 6): WeakMap-based
-  //   Function.prototype.toString override. Disguised functions have no own
-  //   toString property (defeats hasOwnProperty detection). Getter names
-  //   set to "get propName" format. GOPD/GOPDs/Reflect.GOPD normalize
-  //   descriptor flags against pristine baselines via _spoofedProps registry.
-  //   Wrapper function.length preserved to match native arity.
-  //
-  // - Global Privacy Control (v2 item 7): navigator.globalPrivacyControl
-  //   returns true via hardened spoof() path. Sec-GPC: 1 header added as
-  //   static DNR rule (rule ID 3). Header/JS parity guaranteed — both
-  //   surfaces always advertise GPC.
-  //
-  // - Query string stripping (v2 item 8): static DNR redirect rule (ID 4)
-  //   strips 17 tracking params (utm_*, fbclid, gclid, dclid, msclkid,
-  //   yclid, twclid, mc_eid, _ga, _gl, wbraid, gbraid) via
-  //   queryTransform.removeParams. Main-frame + sub-frame only.
-  //
-  // - Cross-origin referrer trimming (v2 item 9): static DNR rule (ID 5)
-  //   sets Referrer-Policy: origin-when-cross-origin on all responses.
-  //   Combined with pre-existing rule 1 (Referer removal for domainType
-  //   thirdParty sub-requests), the effective policy is:
-  //     Main-frame cross-origin → origin-only Referer
-  //     Same-domain cross-origin (different port/scheme) → origin-only Referer
-  //     Third-party sub-resources (different eTLD+1) → no Referer (rule 1)
-  //     Same-origin → full path+query preserved
-  //   JS belt-and-suspenders: document.referrer spoofed to origin-only
-  //   for cross-origin, full path preserved for same-origin.
-  // - WebRTC IP leak prevention (v2 item 10): background.js sets
-  //   chrome.privacy.network.webRTCIPHandlingPolicy to
-  //   default_public_interface_only. No MAIN-world override needed.
-  // - enumerateDevices spoofing (v2 item 11): overrides
-  //   navigator.mediaDevices.enumerateDevices() to return a stable,
-  //   low-entropy device list (1 audioinput, 1 audiooutput, 1 videoinput).
-  //   Device IDs are deterministic hex from session seed. Labels empty
-  //   (matches pre-permission browser behavior).
-
+  // src/content/anti-fingerprint/index.js
+  var require_index = __commonJS({
+    "src/content/anti-fingerprint/index.js"() {
+      init_core();
+      init_navigator();
+      init_screen();
+      init_canvas();
+      init_webgl();
+      init_audio();
+      init_biometric();
+      init_misc();
+      (function() {
+        "use strict";
+        const ctx = createContext();
+        if (!ctx) return;
+        installNavigator(ctx);
+        installScreen(ctx);
+        installCanvas(ctx);
+        installWebGL(ctx);
+        installAudio(ctx);
+        installBiometric(ctx);
+        installMisc(ctx);
+      })();
+    }
+  });
+  require_index();
 })();
