@@ -1686,33 +1686,20 @@
   // time. Deprecated but still available in Chrome. High-entropy surface.
   // Spoofed to lowest-entropy state: fully charged on AC power.
   //
-  // Native shape: getBattery lives on Navigator.prototype (Chrome). Patched
-  // at prototype level via descriptor to avoid creating own property on the
-  // navigator instance (rowan review: instance-own spoofing rejected).
-  if (typeof Navigator !== 'undefined' &&
-      typeof Navigator.prototype.getBattery === 'function') {
-    const _fakeBattery = {
-      charging: true,
-      chargingTime: 0,
-      dischargingTime: Infinity,
-      level: 1.0,
-      addEventListener: function() {},
-      removeEventListener: function() {},
-      dispatchEvent: function() { return true; },
-      onchargingchange: null,
-      onchargingtimechange: null,
-      ondischargingtimechange: null,
-      onlevelchange: null,
-    };
-    ORIG.defineProperty.call(Object, _fakeBattery, Symbol.toStringTag, {
-      value: 'BatteryManager', configurable: true,
-    });
-    ORIG.freeze.call(Object, _fakeBattery);
-
-    const _origGetBattery = Navigator.prototype.getBattery;
-    Navigator.prototype.getBattery = disguise(function getBattery() {
-      return ORIG.promiseResolve.call(Promise, _fakeBattery);
-    }, 'getBattery', 0);
+  // Native shape preserved: BatteryManager inherits from EventTarget.
+  // Properties (charging, level, chargingTime, dischargingTime) are getters
+  // on BatteryManager.prototype. Event methods (addEventListener etc.)
+  // inherited from EventTarget.prototype. We spoof the getters on the
+  // prototype via spoof() — same pattern as navigator properties. GOPD
+  // normalization, toString hardening, getter.name all automatic via spoof().
+  // getBattery() is NOT overridden; it returns the real BatteryManager
+  // instance whose prototype getters now return fixed values.
+  // No fake objects, no own properties, native prototype chain preserved.
+  if (typeof BatteryManager !== 'undefined') {
+    spoof(BatteryManager.prototype, 'charging', function() { return true; });
+    spoof(BatteryManager.prototype, 'chargingTime', function() { return 0; });
+    spoof(BatteryManager.prototype, 'dischargingTime', function() { return Infinity; });
+    spoof(BatteryManager.prototype, 'level', function() { return 1.0; });
   }
 
   // === Worker navigator override script ===
