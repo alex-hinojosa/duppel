@@ -22,7 +22,7 @@ export default defineConfig({
     {
       name: 'external',
       testMatch: /external\/.*\.spec\.ts/,
-      timeout: 60_000,
+      timeout: 90_000,
       retries: 2,
     },
   ],
