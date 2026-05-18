@@ -51,6 +51,7 @@
     getOwnPropertyDescriptors: Object.getOwnPropertyDescriptors,
     reflectGOPD: typeof Reflect !== "undefined" ? Reflect.getOwnPropertyDescriptor : null,
     promiseResolve: Promise.resolve,
+    freeze: Object.freeze,
   };
   if (typeof WebGLRenderingContext !== "undefined") {
     ORIG.glGetParameter = WebGLRenderingContext.prototype.getParameter;
@@ -1684,7 +1685,12 @@
   // navigator.getBattery() returns charging state, level, charging/discharging
   // time. Deprecated but still available in Chrome. High-entropy surface.
   // Spoofed to lowest-entropy state: fully charged on AC power.
-  if (typeof navigator !== 'undefined' && typeof navigator.getBattery === 'function') {
+  //
+  // Native shape: getBattery lives on Navigator.prototype (Chrome). Patched
+  // at prototype level via descriptor to avoid creating own property on the
+  // navigator instance (rowan review: instance-own spoofing rejected).
+  if (typeof Navigator !== 'undefined' &&
+      typeof Navigator.prototype.getBattery === 'function') {
     const _fakeBattery = {
       charging: true,
       chargingTime: 0,
@@ -1702,7 +1708,9 @@
       value: 'BatteryManager', configurable: true,
     });
     ORIG.freeze.call(Object, _fakeBattery);
-    navigator.getBattery = disguise(function getBattery() {
+
+    const _origGetBattery = Navigator.prototype.getBattery;
+    Navigator.prototype.getBattery = disguise(function getBattery() {
       return ORIG.promiseResolve.call(Promise, _fakeBattery);
     }, 'getBattery', 0);
   }
