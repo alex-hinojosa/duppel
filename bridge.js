@@ -1,9 +1,12 @@
+/* eslint-disable no-undef */
+const B = typeof browser !== "undefined" ? browser : chrome;
+
 /**
  * PhantomGrid — Bridge Content Script (ISOLATED world)
  *
  * Rowan pass 5 rewrite (2026-05-08):
  * - Reads seed from sessionStorage (shared with MAIN world) and syncs
- *   it to background.js via chrome.runtime.sendMessage.
+ *   it to background.js via B.runtime.sendMessage.
  * - DOES NOT use chrome.storage.session (not accessible from content
  *   scripts without setAccessLevel — all previous .set()/.get() calls
  *   were silently failing, which was the root cause of the side panel
@@ -37,7 +40,7 @@
       if (raw) {
         const seed = parseInt(raw, 10);
         if (seed) {
-          chrome.runtime.sendMessage({ type: "seedObserved", seed: seed });
+          B.runtime.sendMessage({ type: "seedObserved", seed: seed });
           return true;
         }
       }
@@ -52,7 +55,7 @@
   // failed from content scripts.
   function checkSiteOverride() {
     try {
-      chrome.runtime.sendMessage({
+      B.runtime.sendMessage({
         type: "checkSiteOverride",
         hostname: window.location.hostname,
       });
@@ -114,7 +117,7 @@
         if (completed === total) {
           setTimeout(function() {
             try {
-              chrome.runtime.sendMessage({
+              B.runtime.sendMessage({
                 type: "chaffFired",
                 count: accepted,
               });
@@ -131,7 +134,7 @@
       const count = _applyDOMChaff(domPayload);
       if (count > 0) {
         try {
-          chrome.runtime.sendMessage({ type: "domChaffApplied", count: count });
+          B.runtime.sendMessage({ type: "domChaffApplied", count: count });
         } catch(e) {}
       }
     }
@@ -246,7 +249,7 @@
   }
 
   // === Listen for messages from background ===
-  chrome.runtime.onMessage.addListener((msg) => {
+  B.runtime.onMessage.addListener((msg) => {
     if (msg.type === "overrideChanged") {
       checkSiteOverride();
     } else if (msg.type === "queueChaff" && Array.isArray(msg.configs)) {

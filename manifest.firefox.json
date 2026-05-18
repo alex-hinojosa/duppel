@@ -1,0 +1,61 @@
+{
+  "manifest_version": 3,
+  "name": "PhantomGrid",
+  "version": "0.1.0",
+  "description": "Anti-tracking fingerprint spoofing, cookie containering, and tracker data poisoning.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "phantomgrid@phantomgrid.ext",
+      "strict_min_version": "128.0"
+    }
+  },
+  "permissions": [
+    "webRequest",
+    "webRequestBlocking",
+    "storage",
+    "cookies",
+    "alarms",
+    "scripting",
+    "tabs",
+    "privacy"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": [
+      "profiles.js",
+      "poisoner.js",
+      "web-request-rules.js",
+      "background.firefox.js"
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["anti-fingerprint.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["bridge.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

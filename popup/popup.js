@@ -1,3 +1,6 @@
+/* eslint-disable no-undef */
+const B = typeof browser !== "undefined" ? browser : chrome;
+
 /**
  * PhantomGrid — Popup UI Controller
  */
@@ -64,7 +67,7 @@ function formatNumber(n) {
 // Get current tab hostname
 async function getCurrentHostname() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [tab] = await B.tabs.query({ active: true, currentWindow: true });
     if (tab && tab.url) {
       return new URL(tab.url).hostname;
     }
@@ -78,12 +81,12 @@ async function init() {
   currentSite.textContent = hostname;
 
   // Get state from background
-  chrome.runtime.sendMessage({ type: "getState" }, (state) => {
+  B.runtime.sendMessage({ type: "getState" }, (state) => {
     if (state) updateUI(state);
   });
 
   // Check site override
-  chrome.storage.session.get(["siteOverrides"], (data) => {
+  B.storage.session.get(["siteOverrides"], (data) => {
     const overrides = data.siteOverrides || {};
     siteEnabled.checked = overrides[hostname] !== false;
   });
@@ -91,24 +94,24 @@ async function init() {
 
 // Event listeners
 enableToggle.addEventListener("change", () => {
-  chrome.runtime.sendMessage({
+  B.runtime.sendMessage({
     type: "toggleEnabled",
     enabled: enableToggle.checked,
   });
 });
 
 // Restore "all tabs" preference
-chrome.storage.local.get(["rotateAllTabs"], (data) => {
+B.storage.local.get(["rotateAllTabs"], (data) => {
   rotateAllTabs.checked = !!data.rotateAllTabs;
 });
 rotateAllTabs.addEventListener("change", () => {
-  chrome.storage.local.set({ rotateAllTabs: rotateAllTabs.checked });
+  B.storage.local.set({ rotateAllTabs: rotateAllTabs.checked });
 });
 
 rotateBtn.addEventListener("click", () => {
   rotateBtn.textContent = "Rotating...";
   rotateBtn.disabled = true;
-  chrome.runtime.sendMessage({
+  B.runtime.sendMessage({
     type: "rotateNow",
     allTabs: rotateAllTabs.checked,
   }, (resp) => {
@@ -117,7 +120,7 @@ rotateBtn.addEventListener("click", () => {
       // Profile is already written by background before this response arrives.
       // Short delay just so user sees the "Done" feedback before UI resets.
       setTimeout(() => {
-        chrome.runtime.sendMessage({ type: "getState" }, (state) => {
+        B.runtime.sendMessage({ type: "getState" }, (state) => {
           if (state) updateUI(state);
         });
         rotateBtn.textContent = "Rotate Identity";
@@ -133,7 +136,7 @@ rotateBtn.addEventListener("click", () => {
 chaosBtns.forEach(btn => {
   btn.addEventListener("click", () => {
     const level = btn.dataset.level;
-    chrome.runtime.sendMessage({ type: "setChaosLevel", level: level });
+    B.runtime.sendMessage({ type: "setChaosLevel", level: level });
     chaosBtns.forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
     chaosDesc.textContent = chaosDescriptions[level];
@@ -142,11 +145,11 @@ chaosBtns.forEach(btn => {
 
 cleanCookiesBtn.addEventListener("click", () => {
   cleanCookiesBtn.textContent = "Cleaning...";
-  chrome.runtime.sendMessage({ type: "cleanCookiesNow" }, (resp) => {
+  B.runtime.sendMessage({ type: "cleanCookiesNow" }, (resp) => {
     cleanCookiesBtn.textContent = `Cleaned ${resp?.cleaned || 0}`;
     setTimeout(() => { cleanCookiesBtn.textContent = "Clean Cookies Now"; }, 2000);
     // Refresh stats
-    chrome.runtime.sendMessage({ type: "getState" }, (state) => {
+    B.runtime.sendMessage({ type: "getState" }, (state) => {
       if (state) updateUI(state);
     });
   });
@@ -154,10 +157,10 @@ cleanCookiesBtn.addEventListener("click", () => {
 
 fireBeaconsBtn.addEventListener("click", () => {
   fireBeaconsBtn.textContent = "Firing...";
-  chrome.runtime.sendMessage({ type: "fireBeaconsNow" }, (resp) => {
+  B.runtime.sendMessage({ type: "fireBeaconsNow" }, (resp) => {
     fireBeaconsBtn.textContent = `Fired ${resp?.fired || 0}`;
     setTimeout(() => { fireBeaconsBtn.textContent = "Fire Beacons Now"; }, 2000);
-    chrome.runtime.sendMessage({ type: "getState" }, (state) => {
+    B.runtime.sendMessage({ type: "getState" }, (state) => {
       if (state) updateUI(state);
     });
   });
@@ -173,8 +176,8 @@ perTabMode.addEventListener("change", () => {
   if (perTabMode.checked) {
     perTabWarning.showModal();
   } else {
-    chrome.runtime.sendMessage({ type: "setIdentityMode", mode: "session" }, () => {
-      chrome.runtime.sendMessage({ type: "getState" }, (state) => {
+    B.runtime.sendMessage({ type: "setIdentityMode", mode: "session" }, () => {
+      B.runtime.sendMessage({ type: "getState" }, (state) => {
         if (state) updateUI(state);
       });
     });
@@ -183,8 +186,8 @@ perTabMode.addEventListener("change", () => {
 
 perTabConfirm.addEventListener("click", () => {
   perTabWarning.close();
-  chrome.runtime.sendMessage({ type: "setIdentityMode", mode: "per-tab" }, () => {
-    chrome.runtime.sendMessage({ type: "getState" }, (state) => {
+  B.runtime.sendMessage({ type: "setIdentityMode", mode: "per-tab" }, () => {
+    B.runtime.sendMessage({ type: "getState" }, (state) => {
       if (state) updateUI(state);
     });
   });
@@ -197,7 +200,7 @@ perTabCancel.addEventListener("click", () => {
 
 siteEnabled.addEventListener("change", async () => {
   const hostname = await getCurrentHostname();
-  chrome.runtime.sendMessage({
+  B.runtime.sendMessage({
     type: "setSiteOverride",
     hostname: hostname,
     enabled: siteEnabled.checked,
@@ -209,7 +212,7 @@ init();
 // Live refresh — side panel stays open, so poll every 2 seconds
 // Includes full state (profile + stats) so display stays current after rotation
 setInterval(() => {
-  chrome.runtime.sendMessage({ type: "getState" }, (state) => {
+  B.runtime.sendMessage({ type: "getState" }, (state) => {
     if (state) updateUI(state);
   });
 }, 2000);
