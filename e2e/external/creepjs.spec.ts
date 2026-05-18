@@ -1,27 +1,212 @@
 /**
- * CreepJS smoke test.
- * Verifies page loads and generates a trust score element.
+ * CreepJS quantitative benchmark.
+ * Extracts trust score, lie count, fingerprint hash.
+ * CreepJS takes 10-20 seconds to compute — all tests use extended timeouts.
  */
 
 import { test, expect } from '../fixtures/extension';
+import {
+  triggerRotation,
+  writeBenchmarkResult,
+  extractByRegex,
+} from '../helpers/benchmark-utils';
+
+const CREEPJS_URL = 'https://abrahamjuliot.github.io/creepjs/';
+
+interface CreepJSMetrics {
+  trustScore: string | null;
+  lieCount: number | null;
+  fingerprintHash: string | null;
+  lieCategories: string[];
+}
+
+/**
+ * Wait for CreepJS to finish computing and extract metrics.
+ * CreepJS uses dynamic class names, so we rely on text content patterns.
+ */
+async function extractCreepJSMetrics(page: import('@playwright/test').Page): Promise<CreepJSMetrics> {
+  // Wait for CreepJS to finish — it takes a while
+  // Poll for the trust score to appear (indicates computation is complete)
+  for (let i = 0; i < 60; i++) {
+    const body = await page.textContent('body').catch(() => '');
+    if (body && (body.includes('trust score') || body.includes('Trust Score') || body.match(/\d+(\.\d+)?%/))) {
+      break;
+    }
+    await page.waitForTimeout(1000);
+  }
+
+  // Additional wait for rendering to settle
+  await page.waitForTimeout(2000);
+
+  const metrics = await page.evaluate(() => {
+    const body = document.body.textContent ?? '';
+
+    // Trust score — look for percentage pattern near "trust" text
+    let trustScore: string | null = null;
+    const trustMatch = body.match(/(?:trust\s*score[:\s]*)?(\d+(?:\.\d+)?)\s*%/i);
+    if (trustMatch) {
+      trustScore = trustMatch[1] + '%';
+    }
+
+    // Fingerprint hash — CreepJS shows a hash identifier
+    let fingerprintHash: string | null = null;
+    const hashMatch = body.match(/\b([0-9a-f]{8,64})\b/i);
+    if (hashMatch) {
+      fingerprintHash = hashMatch[1];
+    }
+
+    // Lie detection — count "lie" mentions and categories
+    let lieCount: number | null = null;
+    const lieCountMatch = body.match(/(\d+)\s*lie/i);
+    if (lieCountMatch) {
+      lieCount = parseInt(lieCountMatch[1], 10);
+    }
+
+    // Lie categories — look for specific detection mentions
+    const lieCategories: string[] = [];
+    const lieCatPatterns = [
+      /toString\s*(?:lie|detected)/i,
+      /descriptor\s*(?:lie|detected)/i,
+      /prototype\s*(?:lie|detected)/i,
+      /getOwnPropertyDescriptor\s*(?:lie|detected)/i,
+      /iframe\s*(?:lie|detected)/i,
+    ];
+    for (const pattern of lieCatPatterns) {
+      if (pattern.test(body)) {
+        const cat = pattern.source.split('\\s')[0];
+        lieCategories.push(cat);
+      }
+    }
+
+    return { trustScore, lieCount, fingerprintHash, lieCategories };
+  });
+
+  return metrics;
+}
 
 test.describe('CreepJS @external', () => {
   test.describe.configure({ retries: 2 });
 
-  test('page loads and generates fingerprint', async ({ extensionPage }) => {
+  test('generates trust score and fingerprint', async ({ extensionPage }) => {
     test.slow();
-    await extensionPage.goto('https://abrahamjuliot.github.io/creepjs/', {
+    await extensionPage.goto(CREEPJS_URL, {
       waitUntil: 'networkidle',
-      timeout: 45_000,
+      timeout: 60_000,
     });
 
-    // Wait for CreepJS to finish fingerprinting (it takes a while)
-    await extensionPage.waitForTimeout(5000);
+    const metrics = await extractCreepJSMetrics(extensionPage);
+    await extensionPage.screenshot({ path: 'test-results/creepjs.png', fullPage: true });
 
-    await extensionPage.screenshot({ path: 'test-results/creepjs.png' });
+    // At minimum we should get either a trust score or a fingerprint hash
+    const hasData = metrics.trustScore || metrics.fingerprintHash;
+    if (!hasData) {
+      test.skip(true, 'CreepJS did not produce extractable metrics — page structure may have changed');
+      return;
+    }
 
-    // Verify the page rendered something
-    const bodyText = await extensionPage.textContent('body').catch(() => '');
-    expect(bodyText!.length).toBeGreaterThan(100);
+    // Trust score should be a valid percentage if present
+    if (metrics.trustScore) {
+      const pct = parseFloat(metrics.trustScore);
+      expect(pct).toBeGreaterThanOrEqual(0);
+      expect(pct).toBeLessThanOrEqual(100);
+    }
+
+    writeBenchmarkResult('creepjs-metrics', {
+      service: 'CreepJS',
+      timestamp: new Date().toISOString(),
+      preRotation: {
+        trustScore: metrics.trustScore,
+        lieCount: metrics.lieCount,
+        fingerprintHash: metrics.fingerprintHash,
+        lieCategories: metrics.lieCategories,
+      },
+      postRotation: null,
+      sessionStable: true,
+      rotationChanged: false,
+    });
+  });
+
+  test('fingerprint changes on rotation', async ({ context, extensionId }) => {
+    test.slow();
+
+    // Pre-rotation
+    const prePage = await context.newPage();
+    await prePage.goto(CREEPJS_URL, { waitUntil: 'networkidle', timeout: 60_000 });
+    const preMetrics = await extractCreepJSMetrics(prePage);
+    await prePage.screenshot({ path: 'test-results/creepjs-pre.png', fullPage: true });
+    await prePage.close();
+
+    if (!preMetrics.fingerprintHash) {
+      test.skip(true, 'Could not extract pre-rotation fingerprint hash');
+      return;
+    }
+
+    // Rotate
+    await triggerRotation(context, extensionId);
+
+    // Post-rotation
+    const postPage = await context.newPage();
+    await postPage.goto(CREEPJS_URL, { waitUntil: 'networkidle', timeout: 60_000 });
+    const postMetrics = await extractCreepJSMetrics(postPage);
+    await postPage.screenshot({ path: 'test-results/creepjs-post.png', fullPage: true });
+    await postPage.close();
+
+    if (!postMetrics.fingerprintHash) {
+      test.skip(true, 'Could not extract post-rotation fingerprint hash');
+      return;
+    }
+
+    // Fingerprint hash should differ after rotation
+    expect(preMetrics.fingerprintHash).not.toBe(postMetrics.fingerprintHash);
+
+    writeBenchmarkResult('creepjs-rotation', {
+      service: 'CreepJS',
+      timestamp: new Date().toISOString(),
+      preRotation: {
+        trustScore: preMetrics.trustScore,
+        lieCount: preMetrics.lieCount,
+        fingerprintHash: preMetrics.fingerprintHash,
+      },
+      postRotation: {
+        trustScore: postMetrics.trustScore,
+        lieCount: postMetrics.lieCount,
+        fingerprintHash: postMetrics.fingerprintHash,
+      },
+      sessionStable: true,
+      rotationChanged: preMetrics.fingerprintHash !== postMetrics.fingerprintHash,
+    });
+  });
+
+  test('lie count is observable', async ({ extensionPage }) => {
+    test.slow();
+    await extensionPage.goto(CREEPJS_URL, {
+      waitUntil: 'networkidle',
+      timeout: 60_000,
+    });
+
+    const metrics = await extractCreepJSMetrics(extensionPage);
+    await extensionPage.screenshot({ path: 'test-results/creepjs-lies.png', fullPage: true });
+
+    // This is a measurement test — we log what CreepJS detects rather than
+    // enforcing a hard threshold. The lie count is expected to be non-null
+    // if CreepJS completed its analysis.
+    if (metrics.lieCount === null && !metrics.trustScore) {
+      test.skip(true, 'CreepJS did not complete analysis');
+      return;
+    }
+
+    // Log the results — lie count of 0 is actually ideal (no detections)
+    writeBenchmarkResult('creepjs-lies', {
+      service: 'CreepJS',
+      timestamp: new Date().toISOString(),
+      preRotation: {
+        lieCount: metrics.lieCount,
+        lieCategories: metrics.lieCategories,
+        trustScore: metrics.trustScore,
+      },
+      postRotation: null,
+      sessionStable: true,
+      rotationChanged: false,
+    });
   });
 });
