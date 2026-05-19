@@ -296,11 +296,13 @@ The review loop worked exactly as designed on this bug. I had my hands on the co
 
 ## Quantitative Evaluation Against Live Fingerprinting Services
 
-**Date:** 2026-05-18 | **Branch:** `v3/stream3-benchmark` | **Commit:** `bfc8242`
+**Date:** 2026-05-18 | **Branch:** `main` | **Commit:** `24e98d4`
 
-We built an automated benchmark suite (15 Playwright specs) that navigates to four industry-standard fingerprinting services with PhantomGrid loaded, extracts the numerical metrics those services compute, and validates identity coherence, session stability, and rotation behavior. This replaces a manual testing protocol. Total test count across the project: 252 (237 local/rotation + 15 external benchmark). The suite exits green (15/15 expected), but individual benchmark artifacts carry a per-service status of `pass` or `inconclusive` — see the JSON files at `benchmark-results/` and `test-results/benchmark-*.json` for the authoritative per-run data.
+**Scope:** This evaluation measures cloaking effectiveness against publicly-available fingerprinting services that approximate ad-tech techniques. It does not measure behavioral biometric linking, chaff/poisoning effectiveness, first-navigation UA mismatch, or performance against commercial fingerprinting stacks (ThreatMetrix, FingerprintJS Pro, Sift, Forter). These are known eval gaps documented below.
 
-**Important:** Values below are from sample runs. CreepJS and Cover Your Tracks results vary between runs due to live-service behavior (caching, computation timing, server-side variation). The JSON artifacts from each run are the authoritative source.
+We built an automated benchmark suite (15 Playwright specs) that navigates to four publicly-available fingerprinting services with PhantomGrid loaded, extracts the numerical metrics those services compute, and validates identity coherence, session stability, and rotation behavior. This replaces a manual testing protocol. Total test count across the project: 252 (237 local/rotation + 15 external benchmark). The suite exits green (15/15 expected), but individual benchmark artifacts carry a per-service status of `pass` or `inconclusive` — see the JSON files at `benchmark-results/` and `test-results/benchmark-*.json` for the authoritative per-run data.
+
+**Important:** Values below are from low single-digit runs (n < 5) of a single persona group (Apple M2 / macOS / Chrome 147). This is sufficient to validate the test infrastructure and identify findings, but not to characterize distributions or generalize across personas. CreepJS and Cover Your Tracks results vary between runs due to live-service behavior (caching, computation timing, server-side variation). The JSON artifacts from each run are the authoritative source.
 
 ### Results by Service
 
@@ -347,17 +349,24 @@ CreepJS results are run-dependent. Trust scores have ranged from 0% (maximum dis
 | Tracker blocking | Blocked |
 | Rotation | Inconclusive — varies by run |
 
-~18 bits places PhantomGrid in the normal browser range (typical: 18-22 bits). Tracker blocking is consistently confirmed. Rotation comparison is recorded as `pass` or `inconclusive` depending on whether CYT reports different values pre/post — the live test involves a full server-side computation that may return identical results within a session.
+18 bits means roughly 1 in 260,000 browsers share this fingerprint — reduced uniqueness compared to a typical 22-bit unprotected browser, but still significantly identifying to a tracker with a large user base. PhantomGrid puts the user in a crowd of hundreds of thousands rather than being near-unique, but this is not anonymity against a major ad-tech platform. No vanilla Chrome baseline is included in V2 (V3 will add one). Tracker blocking is consistently confirmed. Rotation comparison is recorded as `pass` or `inconclusive` depending on whether CYT reports different values pre/post.
 
 **Cloudflare** — Bot detection (pass/fail). Not blocked.
 
 ### Key Findings
 
-1. **BrowserLeaks canvas hash doesn't change on rotation.** BrowserLeaks computes its hash from a canvas rendering method that PhantomGrid's per-page noise does not affect. Our own rotation test suite (via `collectFull()`) confirms the canvas `toDataURL()` output does change. The discrepancy is in how BrowserLeaks extracts its hash.
+1. **BrowserLeaks canvas hash doesn't change on rotation (V3 investigation item).** BrowserLeaks extracts a stable canvas hash through a path PhantomGrid does not intercept. If a public tool can do this, a commercial fingerprinter can too. Possible methods: `getImageData` via an uncovered code path, WebGL-based canvas extraction, or `OffscreenCanvas`. Our own `toDataURL()` output does change on rotation, so the gap is specific to BrowserLeaks' extraction method. V3 will identify the path and either close the gap or document why it cannot be closed.
 
 2. **FingerprintJS visitorId is not stable across tabs.** This is caused by per-page canvas noise and is by design. Per-page randomness prevents a fingerprinting service from correlating multiple tabs belonging to the same user, which is the stronger privacy posture.
 
 3. **CreepJS and Cover Your Tracks rotation is not uniformly validated.** These services may return identical pre/post fingerprint composites within a browser session due to caching or computation dominated by un-noised surfaces. The benchmark records these outcomes as `inconclusive` rather than claiming confirmed rotation. FingerprintJS rotation (3 distinct visitorIds across 3 rotations) is the consistently validated rotation signal across live services.
+
+### What This Benchmark Does Not Measure
+
+- **Behavioral biometrics across tabs.** None of the tested services evaluate cross-tab keystroke or mouse-trajectory linking. Biometric precision reduction raises the cost of behavioral correlation but does not eliminate it; that claim is unmeasured here.
+- **Chaff/poisoning effectiveness.** This benchmark measures cloaking (does the spoofed identity hold up?), not poisoning (does the chaff engine contaminate a tracker's behavioral profile?). Poisoning effectiveness requires a different methodology.
+- **First-navigation UA mismatch.** The Playwright test flow waits for seed convergence before navigating. Real-world first navigations may hit the target before the spoofed identity is fully applied.
+- **Commercial fingerprinting stacks.** ThreatMetrix, Iovation/TransUnion, Sift, Forter, and FingerprintJS Pro are not publicly testable and were not evaluated. Results here should not be read as "PhantomGrid defeats all fingerprinting."
 
 ---
 
