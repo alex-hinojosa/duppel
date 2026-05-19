@@ -16,7 +16,7 @@
  * Rowan dispatch (UID 397): prove mechanism before any runtime fix.
  */
 
-import { test, expect } from '../fixtures/extension';
+import { test, expect, getTestPageUrl } from '../fixtures/extension';
 import { writeBenchmarkResult } from '../helpers/benchmark-utils';
 
 test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
@@ -1179,82 +1179,129 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
 
     // CANVAS IDENTITY CONTRACT (rowan UID 405):
     //   PhantomGrid canvas noise is deterministic for (seed, pixel_index, pixel_value).
-    //   Cross-tab equality holds when the pre-noise pixel buffer is deterministic.
-    //   Geometric content (solid fills, rectangles, gradients — no text) produces
-    //   bit-exact pixel buffers across page loads, so noise output is identical.
+    //   Cross-tab equality holds when:
+    //     (a) both tabs have the same canvasSeed (derived from sessionSeed), AND
+    //     (b) the pre-noise pixel buffer is bit-exact across tabs.
     //
-    //   This is the HARD cross-tab assertion. For text-dependent external
-    //   measurements (BrowserLeaks), see browserleaks.spec.ts which is
-    //   measurement-only because Chrome's text rasterizer is not bit-exact.
+    //   This test satisfies both conditions:
+    //     (a) Seed convergence via reload — the first load may hit the Item 2
+    //         "residual gap" (content script races background pre-injection).
+    //         A reload after bridge.js correction ensures the content script
+    //         re-initializes with the converged session seed.
+    //     (b) putImageData — sets exact known pixel values, bypassing the GPU
+    //         rendering pipeline entirely. No fillRect/arc/gradient/text variance.
+    //
+    //   Validity requirements (rowan review of 81ef83a):
+    //   - Runs on a real injected origin (local test server, not about:blank)
+    //   - Proves PhantomGrid is active (gray-fill noise detection)
+    //   - Proves same seed across tabs (sessionStorage match)
+    //   - Asserts HARD equality on noised toDataURL output
 
-    const drawGeometric = `(() => {
+    // Probe function: checks PhantomGrid is active, extracts seed, draws
+    // geometric content, returns toDataURL for cross-tab comparison.
+    // Uses putImageData to set exact known pixel values — bypasses GPU
+    // rendering pipeline entirely, so any difference must come from noise.
+    const probeAndDraw = `(() => {
+      // 1. PhantomGrid activity probe: gray-fill noise detection
+      const gc = document.createElement('canvas');
+      gc.width = 50; gc.height = 10;
+      const gctx = gc.getContext('2d');
+      gctx.fillStyle = '#808080';
+      gctx.fillRect(0, 0, 50, 10);
+      const gData = gctx.getImageData(0, 0, 50, 10);
+      let noised = false;
+      for (let i = 0; i < gData.data.length; i += 4) {
+        if (gData.data[i] !== 128 || gData.data[i+1] !== 128 || gData.data[i+2] !== 128) {
+          noised = true; break;
+        }
+      }
+
+      // 2. Seed extraction
+      const seed = sessionStorage.getItem('__pg_seed__') ?? null;
+
+      // 3. Canvas via putImageData (exact known pixels, no rendering variance)
       const c = document.createElement('canvas');
       c.width = 200; c.height = 100;
       const ctx = c.getContext('2d');
+      const inputData = ctx.createImageData(200, 100);
+      // Fill with a gradient-like pattern of known exact values
+      for (let y = 0; y < 100; y++) {
+        for (let x = 0; x < 200; x++) {
+          const idx = (y * 200 + x) * 4;
+          inputData.data[idx]     = (x + 50) & 255;  // R
+          inputData.data[idx + 1] = (y + 30) & 255;  // G
+          inputData.data[idx + 2] = ((x * y) >> 2) & 255; // B
+          inputData.data[idx + 3] = 255;              // A
+        }
+      }
+      ctx.putImageData(inputData, 0, 0);
+      const tdu = c.toDataURL('image/png');
 
-      // Solid fill
-      ctx.fillStyle = '#336699';
-      ctx.fillRect(0, 0, 200, 100);
-
-      // Rectangles (no text)
-      ctx.fillStyle = '#ff4400';
-      ctx.fillRect(10, 10, 60, 40);
-      ctx.fillStyle = 'rgba(0, 128, 255, 0.6)';
-      ctx.fillRect(40, 30, 80, 50);
-
-      // Stroked shapes
-      ctx.strokeStyle = '#00ff00';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(120, 15, 50, 70);
-
-      // Arc
-      ctx.beginPath();
-      ctx.arc(150, 50, 20, 0, Math.PI * 1.5);
-      ctx.fillStyle = '#ffcc00';
-      ctx.fill();
-
-      // Gradient
-      const grad = ctx.createLinearGradient(0, 80, 200, 100);
-      grad.addColorStop(0, '#000000');
-      grad.addColorStop(1, '#ffffff');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 85, 200, 15);
-
-      return c.toDataURL('image/png');
+      return { noised, seed, tdu };
     })()`;
 
+    // Use the local test server — a clean HTTP page where the extension
+    // content script injects (matches <all_urls>). Avoids BrowserLeaks'
+    // own JavaScript which may modify canvas rendering state.
+    const testUrl = getTestPageUrl();
+
+    // Seed convergence: the first page load on a new tab may hit the
+    // Item 2 "residual gap" — content script races background seed
+    // pre-injection. If the content script wins the race, it generates a
+    // random seed; bridge.js corrects sessionStorage but can't re-derive
+    // the profile without a reload. The reload ensures the content script
+    // re-initializes with the converged session seed.
     const tab1 = await context.newPage();
-    await tab1.goto('about:blank');
+    await tab1.goto(testUrl, { waitUntil: 'domcontentloaded' });
+    await tab1.waitForTimeout(1500); // let bridge.js seed correction complete
+    await tab1.reload({ waitUntil: 'domcontentloaded' });
     await tab1.waitForTimeout(500);
-    const tdu1 = await tab1.evaluate(drawGeometric);
+    const result1 = await tab1.evaluate(probeAndDraw) as any;
 
     const tab2 = await context.newPage();
-    await tab2.goto('about:blank');
+    await tab2.goto(testUrl, { waitUntil: 'domcontentloaded' });
+    await tab2.waitForTimeout(1500);
+    await tab2.reload({ waitUntil: 'domcontentloaded' });
     await tab2.waitForTimeout(500);
-    const tdu2 = await tab2.evaluate(drawGeometric);
+    const result2 = await tab2.evaluate(probeAndDraw) as any;
 
     await tab1.close();
     await tab2.close();
 
-    // HARD ASSERTION: geometric canvas must be identical across tabs
-    expect(tdu1, 'geometric canvas toDataURL must not be empty').toBeTruthy();
-    expect(tdu2, 'geometric canvas toDataURL must not be empty').toBeTruthy();
-    expect(tdu1).toBe(tdu2);
+    // Diagnostic output BEFORE assertions
+    console.log(`Geometric cross-tab: tab1 noised=${result1.noised} seed=${result1.seed}`);
+    console.log(`Geometric cross-tab: tab2 noised=${result2.noised} seed=${result2.seed}`);
+    console.log(`Geometric cross-tab: seeds match=${result1.seed === result2.seed}`);
+    console.log(`Geometric cross-tab: TDU IDENTICAL=${result1.tdu === result2.tdu}`);
 
-    console.log(`Geometric cross-tab: tab1=${(tdu1 as string).substring(0, 60)}...`);
-    console.log(`Geometric cross-tab: tab2=${(tdu2 as string).substring(0, 60)}...`);
-    console.log(`Geometric cross-tab: IDENTICAL=${tdu1 === tdu2}`);
+    // Step 1: Assert PhantomGrid is ACTIVE on both tabs (gray-fill noise detected)
+    expect(result1.noised, 'PhantomGrid must be active on tab 1 (gray-fill noise detected)').toBe(true);
+    expect(result2.noised, 'PhantomGrid must be active on tab 2 (gray-fill noise detected)').toBe(true);
+
+    // Step 2: Assert same seed/profile across tabs
+    expect(result1.seed, 'seed must be present on tab 1').not.toBeNull();
+    expect(result2.seed, 'seed must be present on tab 2').not.toBeNull();
+    expect(result1.seed).toBe(result2.seed);
+
+    // Step 3: HARD ASSERTION — geometric noised output must be identical
+    expect(result1.tdu, 'geometric canvas toDataURL must not be empty on tab 1').toBeTruthy();
+    expect(result2.tdu, 'geometric canvas toDataURL must not be empty on tab 2').toBeTruthy();
+    expect(result1.tdu).toBe(result2.tdu);
 
     writeBenchmarkResult('geometric-cross-tab-identity', {
       service: 'Geometric Canvas Cross-Tab Identity (contract assertion)',
       timestamp: new Date().toISOString(),
       status: 'pass',
       preRotation: {
-        tab1_prefix: (tdu1 as string).substring(0, 80),
-        tab2_prefix: (tdu2 as string).substring(0, 80),
+        tab1_noised: String(result1.noised),
+        tab1_seed: result1.seed,
+        tab1_tdu_prefix: result1.tdu.substring(0, 80),
+        tab2_noised: String(result2.noised),
+        tab2_seed: result2.seed,
+        tab2_tdu_prefix: result2.tdu.substring(0, 80),
       },
       postRotation: null,
-      sessionStable: tdu1 === tdu2,
+      sessionStable: result1.tdu === result2.tdu,
       rotationChanged: false,
     });
   });
