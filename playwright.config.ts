@@ -25,5 +25,11 @@ export default defineConfig({
       timeout: 90_000,
       retries: 2,
     },
+    {
+      name: 'baseline',
+      testMatch: /baseline\/.*\.spec\.ts/,
+      timeout: 90_000,
+      retries: 2,
+    },
   ],
 });
