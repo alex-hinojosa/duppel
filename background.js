@@ -233,6 +233,12 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
             window.__pg_converge__(s);
           }
         }
+        // Primary cleanup: delete convergence hook immediately after use.
+        // Pre-injection is the first background path to run — once it has
+        // either converged or confirmed no mismatch, the hook is no longer
+        // needed. Deleting here ensures the hook is not observable by page
+        // scripts (pre-injection runs at document_start before page JS).
+        try { delete window.__pg_converge__; } catch(e2) {}
       } catch(e) {}
     },
     args: [seedToInject, STATE.identityMode === "session"],
@@ -737,6 +743,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                       if (typeof window.__pg_converge__ === "function") {
                         window.__pg_converge__(s);
                       }
+                      // Cleanup: delete convergence hook after use. If pre-injection
+                      // already deleted it, this is a no-op (delete on non-existent
+                      // configurable property returns true silently).
+                      try { delete window.__pg_converge__; } catch(e2) {}
                     } catch(e) {}
                   },
                   args: [STATE.sessionSeed],

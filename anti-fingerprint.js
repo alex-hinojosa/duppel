@@ -1793,10 +1793,12 @@ importScripts(${JSON.stringify(origUrl)});`],
         const ctx = createContext();
         if (!ctx) return;
         try {
+          const _converge = /* @__PURE__ */ __name(function(correctSeed) {
+            ctx.convergeToSeed(correctSeed);
+          }, "_converge");
+          ctx._nativeStrings.set(_converge, "function __pg_converge__() { [native code] }");
           Object.defineProperty(window, "__pg_converge__", {
-            value: /* @__PURE__ */ __name(function(correctSeed) {
-              ctx.convergeToSeed(correctSeed);
-            }, "value"),
+            value: _converge,
             writable: false,
             enumerable: false,
             configurable: true
@@ -1811,6 +1813,15 @@ importScripts(${JSON.stringify(origUrl)});`],
         installBiometric(ctx);
         installMisc(ctx);
         installIframe(ctx);
+        try {
+          setTimeout(function() {
+            try {
+              delete window.__pg_converge__;
+            } catch (e) {
+            }
+          }, 200);
+        } catch (e) {
+        }
       })();
     }
   });

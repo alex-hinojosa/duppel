@@ -150,9 +150,12 @@ test.describe('First-navigation UA alignment (v2 item 2)', () => {
     // Poll for lastSeed/lastUA to be written by createIdentity()
     // Read both local and session storage atomically to avoid races
     // where createIdentity() runs between two separate reads.
+    // Poll until lastSeed === sessionSeed — the double-createIdentity
+    // startup race (restoreState + onInstalled) can cause a transient
+    // mismatch where sessionSeed updates before lastSeed catches up.
     let result: { lastSeed: number | null; lastUA: string; sessionSeed: number | null } =
       { lastSeed: null, lastUA: '', sessionSeed: null };
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 30; i++) {
       result = await sw.evaluate(async () => {
         const local = await chrome.storage.local.get(['lastSeed', 'lastUA']);
         const session = await chrome.storage.session.get(['sessionSeed']);
@@ -162,7 +165,8 @@ test.describe('First-navigation UA alignment (v2 item 2)', () => {
           sessionSeed: session.sessionSeed || null,
         };
       });
-      if (result.lastSeed && result.lastUA && result.sessionSeed) break;
+      if (result.lastSeed && result.lastUA && result.sessionSeed
+          && result.lastSeed === result.sessionSeed) break;
       await new Promise(r => setTimeout(r, 200));
     }
 
