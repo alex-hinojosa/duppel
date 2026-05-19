@@ -161,6 +161,34 @@ export function installMisc(ctx) {
     Object.defineProperty(self.navigator.__proto__, "appVersion", { get: () => ${JSON.stringify(profile.userAgent.replace("Mozilla/", ""))} });
   `;
 
+  // === Worker canvas noise override script ===
+  // Workers have their own OffscreenCanvas/WebGL prototypes — unpatched by
+  // the main-world installCanvas/installWebGL. This function returns a
+  // self-contained IIFE that patches OffscreenCanvas.convertToBlob,
+  // OffscreenCanvasRenderingContext2D.getImageData, and WebGL readPixels
+  // inside the worker scope. Called at Worker construction time (not install
+  // time) so profile.canvasSeed is read after seed convergence.
+  //
+  // The pixelNoise and applyCanvasNoise functions are inlined — identical
+  // algorithm to canvas.js:19-41. The IIFE prevents variable leakage into
+  // the worker global scope.
+  function buildCanvasWorkerOverrides(seed) {
+    return `
+;(function(){
+  var __s=${seed};
+  function __pn(s,i,v){var h=s^(i*2654435761);h=(h^(v*2246822519))>>>0;h=Math.imul(h^(h>>>16),0x45d9f3b);h=Math.imul(h^(h>>>16),0x45d9f3b);h=(h^(h>>>16))>>>0;var m=(h>>>1)&3;return(h&1)?m:-m;}
+  function __an(px,s){for(var i=0;i<px.length;i+=4){px[i]=Math.max(0,Math.min(255,px[i]+__pn(s,i,px[i])));px[i+1]=Math.max(0,Math.min(255,px[i+1]+__pn(s,i+1,px[i+1])));px[i+2]=Math.max(0,Math.min(255,px[i+2]+__pn(s,i+2,px[i+2])));}}
+  if(typeof OffscreenCanvas!=='undefined'){
+    var _oCtB=OffscreenCanvas.prototype.convertToBlob;
+    var _oGID=(typeof OffscreenCanvasRenderingContext2D!=='undefined')?OffscreenCanvasRenderingContext2D.prototype.getImageData:null;
+    if(_oGID){OffscreenCanvasRenderingContext2D.prototype.getImageData=function(){var id=_oGID.apply(this,arguments);__an(id.data,__s);return id;};}
+    OffscreenCanvas.prototype.convertToBlob=function(){try{if(this.width>0&&this.height>0){var c=this.getContext('2d');if(c){var id=_oGID?_oGID.call(c,0,0,this.width,this.height):c.getImageData(0,0,this.width,this.height);__an(id.data,__s);var t=new OffscreenCanvas(this.width,this.height);t.getContext('2d').putImageData(id,0,0);return _oCtB.apply(t,arguments);}}}catch(e){}return _oCtB.apply(this,arguments);};
+  }
+  if(typeof WebGLRenderingContext!=='undefined'){var _rp=WebGLRenderingContext.prototype.readPixels;WebGLRenderingContext.prototype.readPixels=function(x,y,w,h,f,t,p){_rp.call(this,x,y,w,h,f,t,p);if(p&&f===0x1908&&t===0x1401)__an(p,__s);};}
+  if(typeof WebGL2RenderingContext!=='undefined'){var _rp2=WebGL2RenderingContext.prototype.readPixels;WebGL2RenderingContext.prototype.readPixels=function(x,y,w,h,f,t,p){_rp2.call(this,x,y,w,h,f,t,p);if(p&&f===0x1908&&t===0x1401)__an(p,__s);};}
+})();`;
+  }
+
   // === Web Worker scope leak prevention ===
   // Workers run in a separate global scope with unspoofed navigator.
   // Intercept Worker constructor to inject a wrapper that overrides
@@ -170,6 +198,9 @@ export function installMisc(ctx) {
 
     window.Worker = disguise(function(url, opts) {
       const isModule = opts && opts.type === "module";
+      // Build canvas overrides at construction time — reads profile.canvasSeed
+      // AFTER convergence, not at installMisc time.
+      const allOverrides = workerOverrides + buildCanvasWorkerOverrides(profile.canvasSeed);
       try {
         const origUrl = new URL(url, location.href).href;
         if (isModule) {
@@ -179,14 +210,14 @@ export function installMisc(ctx) {
           // relative paths would break. Dynamic import() with an absolute
           // URL works because it resolves against the network, not the blob origin.
           const blob = new Blob(
-            [workerOverrides + `;\nawait import(${JSON.stringify(origUrl)});`],
+            [allOverrides + `;\nawait import(${JSON.stringify(origUrl)});`],
             { type: "application/javascript" }
           );
           return new OrigWorker(URL.createObjectURL(blob), { ...opts, type: "module" });
         } else {
           // Classic workers: prepend overrides, importScripts the original
           const blob = new Blob(
-            [workerOverrides + `;\nimportScripts(${JSON.stringify(origUrl)});`],
+            [allOverrides + `;\nimportScripts(${JSON.stringify(origUrl)});`],
             { type: "application/javascript" }
           );
           return new OrigWorker(URL.createObjectURL(blob), opts);
@@ -205,12 +236,13 @@ export function installMisc(ctx) {
   if (typeof SharedWorker !== "undefined") {
     const OrigSharedWorker = SharedWorker;
     window.SharedWorker = disguise(function(url, nameOrOpts) {
+      const allOverrides = workerOverrides + buildCanvasWorkerOverrides(profile.canvasSeed);
       try {
         const origUrl = new URL(url, location.href).href;
         // SharedWorkers are always classic (no module support in most browsers).
         // Use importScripts to load the original script after overrides.
         const blob = new Blob(
-          [workerOverrides + `;\nimportScripts(${JSON.stringify(origUrl)});`],
+          [allOverrides + `;\nimportScripts(${JSON.stringify(origUrl)});`],
           { type: "application/javascript" }
         );
         return new OrigSharedWorker(URL.createObjectURL(blob), nameOrOpts);

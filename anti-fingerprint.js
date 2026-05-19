@@ -1556,22 +1556,40 @@
     Object.defineProperty(self.navigator.__proto__, "languages", { get: () => Object.freeze(${JSON.stringify(profile.languages)}) });
     Object.defineProperty(self.navigator.__proto__, "appVersion", { get: () => ${JSON.stringify(profile.userAgent.replace("Mozilla/", ""))} });
   `;
+    function buildCanvasWorkerOverrides(seed) {
+      return `
+;(function(){
+  var __s=${seed};
+  function __pn(s,i,v){var h=s^(i*2654435761);h=(h^(v*2246822519))>>>0;h=Math.imul(h^(h>>>16),0x45d9f3b);h=Math.imul(h^(h>>>16),0x45d9f3b);h=(h^(h>>>16))>>>0;var m=(h>>>1)&3;return(h&1)?m:-m;}
+  function __an(px,s){for(var i=0;i<px.length;i+=4){px[i]=Math.max(0,Math.min(255,px[i]+__pn(s,i,px[i])));px[i+1]=Math.max(0,Math.min(255,px[i+1]+__pn(s,i+1,px[i+1])));px[i+2]=Math.max(0,Math.min(255,px[i+2]+__pn(s,i+2,px[i+2])));}}
+  if(typeof OffscreenCanvas!=='undefined'){
+    var _oCtB=OffscreenCanvas.prototype.convertToBlob;
+    var _oGID=(typeof OffscreenCanvasRenderingContext2D!=='undefined')?OffscreenCanvasRenderingContext2D.prototype.getImageData:null;
+    if(_oGID){OffscreenCanvasRenderingContext2D.prototype.getImageData=function(){var id=_oGID.apply(this,arguments);__an(id.data,__s);return id;};}
+    OffscreenCanvas.prototype.convertToBlob=function(){try{if(this.width>0&&this.height>0){var c=this.getContext('2d');if(c){var id=_oGID?_oGID.call(c,0,0,this.width,this.height):c.getImageData(0,0,this.width,this.height);__an(id.data,__s);var t=new OffscreenCanvas(this.width,this.height);t.getContext('2d').putImageData(id,0,0);return _oCtB.apply(t,arguments);}}}catch(e){}return _oCtB.apply(this,arguments);};
+  }
+  if(typeof WebGLRenderingContext!=='undefined'){var _rp=WebGLRenderingContext.prototype.readPixels;WebGLRenderingContext.prototype.readPixels=function(x,y,w,h,f,t,p){_rp.call(this,x,y,w,h,f,t,p);if(p&&f===0x1908&&t===0x1401)__an(p,__s);};}
+  if(typeof WebGL2RenderingContext!=='undefined'){var _rp2=WebGL2RenderingContext.prototype.readPixels;WebGL2RenderingContext.prototype.readPixels=function(x,y,w,h,f,t,p){_rp2.call(this,x,y,w,h,f,t,p);if(p&&f===0x1908&&t===0x1401)__an(p,__s);};}
+})();`;
+    }
+    __name(buildCanvasWorkerOverrides, "buildCanvasWorkerOverrides");
     if (typeof Worker !== "undefined") {
       const OrigWorker = Worker;
       window.Worker = disguise(function(url, opts) {
         const isModule = opts && opts.type === "module";
+        const allOverrides = workerOverrides + buildCanvasWorkerOverrides(profile.canvasSeed);
         try {
           const origUrl = new URL(url, location.href).href;
           if (isModule) {
             const blob = new Blob(
-              [workerOverrides + `;
+              [allOverrides + `;
 await import(${JSON.stringify(origUrl)});`],
               { type: "application/javascript" }
             );
             return new OrigWorker(URL.createObjectURL(blob), { ...opts, type: "module" });
           } else {
             const blob = new Blob(
-              [workerOverrides + `;
+              [allOverrides + `;
 importScripts(${JSON.stringify(origUrl)});`],
               { type: "application/javascript" }
             );
@@ -1586,10 +1604,11 @@ importScripts(${JSON.stringify(origUrl)});`],
     if (typeof SharedWorker !== "undefined") {
       const OrigSharedWorker = SharedWorker;
       window.SharedWorker = disguise(function(url, nameOrOpts) {
+        const allOverrides = workerOverrides + buildCanvasWorkerOverrides(profile.canvasSeed);
         try {
           const origUrl = new URL(url, location.href).href;
           const blob = new Blob(
-            [workerOverrides + `;
+            [allOverrides + `;
 importScripts(${JSON.stringify(origUrl)});`],
             { type: "application/javascript" }
           );
