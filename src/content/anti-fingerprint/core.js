@@ -300,6 +300,22 @@ export function createContext() {
   const profile = generateProfile(sessionSeed);
   const bioSeed = (profile.canvasSeed ^ 0x42494F4D) >>> 0; // biometric noise seed
 
+  // Seed convergence — allows background.js to correct the profile
+  // when the content script won the seed pre-injection race and used
+  // a random seed. Updates profile in place; all closures that read
+  // profile.* at call time see the corrected values immediately.
+  // Called by background.js pre-injection or seedObserved handler via
+  // window.__pg_converge__ (set up in index.js).
+  function convergeToSeed(correctSeed) {
+    if (correctSeed === sessionSeed) return false;
+    sessionSeed = correctSeed;
+    const newProfile = generateProfile(correctSeed);
+    for (const key of Object.keys(newProfile)) {
+      profile[key] = newProfile[key];
+    }
+    return true;
+  }
+
   // Compute DST-aware offset BEFORE we proxy Intl.DateTimeFormat
   const currentTzOffset = getTimezoneOffset(profile.timezone);
 
@@ -440,5 +456,6 @@ export function createContext() {
     mulberry32,
     _nativeStrings,
     _spoofedProps,
+    convergeToSeed,
   };
 }

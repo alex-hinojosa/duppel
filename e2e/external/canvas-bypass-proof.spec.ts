@@ -1174,6 +1174,103 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
     }
   });
 
+  test('first-nav seed-noise alignment (no reload)', async ({ context }) => {
+    test.slow();
+
+    // SEED CONVERGENCE PROOF (rowan dispatch: seed-convergence race fix).
+    // Proves that on first navigation to a real origin, the active
+    // canvasSeed matches the sessionStorage seed WITHOUT a reload.
+    //
+    // Before the convergence fix, the content script could win the race
+    // against background pre-injection, generate a random seed, compute
+    // profile from it, and then bridge.js would correct sessionStorage
+    // to the session seed — leaving sessionStorage correct but the live
+    // profile.canvasSeed derived from the wrong seed.
+    //
+    // After the fix, background.js pre-injection calls __pg_converge__
+    // to update the live profile in place when a seed mismatch is detected.
+
+    const testUrl = getTestPageUrl();
+    const tab = await context.newPage();
+    await tab.goto(testUrl, { waitUntil: 'domcontentloaded' });
+    // Wait for bridge.js correction + convergence to complete.
+    // NO RELOAD — this is the critical difference from bb57f4a.
+    await tab.waitForTimeout(2000);
+
+    const result = await tab.evaluate(() => {
+      const seedStr = sessionStorage.getItem('__pg_seed__');
+      if (!seedStr) return { error: 'no seed', allMatch: false };
+      const seed = parseInt(seedStr, 10);
+
+      // Replicate mulberry32 from core.js
+      function mulberry32(s: number) {
+        return function() {
+          s |= 0; s = s + 0x6D2B79F5 | 0;
+          let t = Math.imul(s ^ s >>> 15, 1 | s);
+          t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+          return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        };
+      }
+
+      // 9 pickFrom calls + canvasSeed = 10th rng() call
+      function deriveCanvasSeed(sessionSeed: number) {
+        const rng = mulberry32(sessionSeed);
+        for (let i = 0; i < 9; i++) rng();
+        return (rng() * 0xFFFFFFFF) >>> 0;
+      }
+
+      // pixelNoise from canvas.js
+      function pixelNoise(pnSeed: number, i: number, val: number) {
+        let h = pnSeed ^ (i * 2654435761);
+        h = (h ^ (val * 2246822519)) >>> 0;
+        h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
+        h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
+        h = (h ^ (h >>> 16)) >>> 0;
+        const magnitude = (h >>> 1) & 3;
+        return (h & 1) ? magnitude : -magnitude;
+      }
+
+      const expectedCanvasSeed = deriveCanvasSeed(seed);
+
+      // Create canvas with known pixels via putImageData
+      const c = document.createElement('canvas');
+      c.width = 1; c.height = 1;
+      const ctx = c.getContext('2d')!;
+      const id = ctx.createImageData(1, 1);
+      id.data[0] = 128; id.data[1] = 128; id.data[2] = 128; id.data[3] = 255;
+      ctx.putImageData(id, 0, 0);
+
+      // Read via patched getImageData
+      const result = ctx.getImageData(0, 0, 1, 1);
+
+      // Expected noise from session seed
+      const expectedR = Math.max(0, Math.min(255, 128 + pixelNoise(expectedCanvasSeed, 0, 128)));
+      const expectedG = Math.max(0, Math.min(255, 128 + pixelNoise(expectedCanvasSeed, 1, 128)));
+      const expectedB = Math.max(0, Math.min(255, 128 + pixelNoise(expectedCanvasSeed, 2, 128)));
+
+      return {
+        sessionSeed: seed,
+        expectedCanvasSeed,
+        actualR: result.data[0],
+        actualG: result.data[1],
+        actualB: result.data[2],
+        expectedR,
+        expectedG,
+        expectedB,
+        allMatch: result.data[0] === expectedR && result.data[1] === expectedG && result.data[2] === expectedB,
+      };
+    }) as any;
+
+    await tab.close();
+
+    console.log(`Seed-noise alignment: seed=${result.sessionSeed} expectedCS=${result.expectedCanvasSeed}`);
+    console.log(`  expected RGB: [${result.expectedR}, ${result.expectedG}, ${result.expectedB}]`);
+    console.log(`  actual   RGB: [${result.actualR}, ${result.actualG}, ${result.actualB}]`);
+    console.log(`  match: ${result.allMatch}`);
+
+    expect(result.allMatch, 'Active canvasSeed must match sessionStorage seed on first navigation (no reload)').toBe(true);
+  });
+
   test('cross-tab geometric canvas identity (contract assertion)', async ({ context }) => {
     test.slow();
 
@@ -1184,10 +1281,9 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
     //     (b) the pre-noise pixel buffer is bit-exact across tabs.
     //
     //   This test satisfies both conditions:
-    //     (a) Seed convergence via reload — the first load may hit the Item 2
-    //         "residual gap" (content script races background pre-injection).
-    //         A reload after bridge.js correction ensures the content script
-    //         re-initializes with the converged session seed.
+    //     (a) Seed convergence via __pg_converge__ — background.js pre-injection
+    //         calls the convergence function when it detects the content script
+    //         used a different seed. No reload needed.
     //     (b) putImageData — sets exact known pixel values, bypassing the GPU
     //         rendering pipeline entirely. No fillRect/arc/gradient/text variance.
     //
@@ -1245,24 +1341,36 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
     // own JavaScript which may modify canvas rendering state.
     const testUrl = getTestPageUrl();
 
-    // Seed convergence: the first page load on a new tab may hit the
-    // Item 2 "residual gap" — content script races background seed
-    // pre-injection. If the content script wins the race, it generates a
-    // random seed; bridge.js corrects sessionStorage but can't re-derive
-    // the profile without a reload. The reload ensures the content script
-    // re-initializes with the converged session seed.
+    // Wait for STATE.sessionSeed to be ready. On fresh install, restoreState()
+    // and onInstalled both call createIdentity() asynchronously. If we open
+    // tabs before sessionSeed is set, pre-injection skips (STATE.sessionSeed=0)
+    // and seedObserved can't correct (guard: && STATE.sessionSeed). Poll via
+    // the service worker to ensure initialization has completed.
+    const sw = context.serviceWorkers()[0];
+    expect(sw, 'service worker must be available').toBeTruthy();
+    let sessionSeed: number | null = null;
+    for (let i = 0; i < 30; i++) {
+      sessionSeed = await sw.evaluate(async () => {
+        const data = await chrome.storage.session.get(['sessionSeed']);
+        return data.sessionSeed || null;
+      });
+      if (sessionSeed) break;
+      await new Promise(r => setTimeout(r, 150));
+    }
+    expect(sessionSeed, 'sessionSeed must be set before opening tabs').toBeTruthy();
+
+    // First-load canvas identity: no reload needed. The seed convergence
+    // mechanism (__pg_converge__) ensures the active canvasSeed matches
+    // the session seed before page scripts can observe it.
     const tab1 = await context.newPage();
     await tab1.goto(testUrl, { waitUntil: 'domcontentloaded' });
-    await tab1.waitForTimeout(1500); // let bridge.js seed correction complete
-    await tab1.reload({ waitUntil: 'domcontentloaded' });
-    await tab1.waitForTimeout(500);
-    const result1 = await tab1.evaluate(probeAndDraw) as any;
+    await tab1.waitForTimeout(1000); // let convergence complete
 
     const tab2 = await context.newPage();
     await tab2.goto(testUrl, { waitUntil: 'domcontentloaded' });
-    await tab2.waitForTimeout(1500);
-    await tab2.reload({ waitUntil: 'domcontentloaded' });
-    await tab2.waitForTimeout(500);
+    await tab2.waitForTimeout(1000);
+
+    const result1 = await tab1.evaluate(probeAndDraw) as any;
     const result2 = await tab2.evaluate(probeAndDraw) as any;
 
     await tab1.close();

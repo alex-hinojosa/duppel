@@ -217,17 +217,25 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     target: { tabId: tabId, allFrames: false },
     world: "MAIN",
     injectImmediately: true,
-    func: (s) => {
+    func: (s, isSession) => {
       try {
-        // Only set if not already present — preserves existing seed on
-        // same-origin navigations and avoids overwriting if anti-fingerprint.js
-        // already ran (race lost scenario).
-        if (!sessionStorage.getItem("__pg_seed__")) {
+        const existing = sessionStorage.getItem("__pg_seed__");
+        if (!existing) {
+          // Pre-injection won the race: set seed before content script reads it.
           sessionStorage.setItem("__pg_seed__", String(s));
+        } else if (isSession && parseInt(existing, 10) !== s) {
+          // Seed race: content script generated a random seed before
+          // pre-injection arrived. Overwrite sessionStorage and call
+          // the convergence function to update the live profile in place.
+          // This runs at document_start timing, before page scripts execute.
+          sessionStorage.setItem("__pg_seed__", String(s));
+          if (typeof window.__pg_converge__ === "function") {
+            window.__pg_converge__(s);
+          }
         }
       } catch(e) {}
     },
-    args: [seedToInject],
+    args: [seedToInject, STATE.identityMode === "session"],
   }).catch(() => {}); // Tab may not be injectable (chrome://, devtools, etc.)
 });
 
@@ -715,16 +723,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           try {
             if (STATE.identityMode === "session") {
               if (observedSeed !== STATE.sessionSeed && STATE.sessionSeed) {
-                // Item 2: Silently correct sessionStorage for future
-                // same-origin navigations. Do NOT reload — the reload itself
-                // is a fingerprinting signal (performance.navigation.type === 1).
-                // The first page load is the documented residual gap; all
-                // subsequent navigations on this origin will use the correct seed.
+                // Item 2: Correct sessionStorage and converge the live profile.
+                // The pre-injection may have already converged (if it ran after
+                // the content script but before bridge.js). convergeToSeed is
+                // idempotent — calling it twice with the same seed is a no-op.
+                // No reload needed — convergence updates profile in place.
                 await chrome.scripting.executeScript({
                   target: { tabId: sender.tab.id, allFrames: true },
                   world: "MAIN",
                   func: (s) => {
-                    try { sessionStorage.setItem("__pg_seed__", String(s)); } catch(e) {}
+                    try {
+                      sessionStorage.setItem("__pg_seed__", String(s));
+                      if (typeof window.__pg_converge__ === "function") {
+                        window.__pg_converge__(s);
+                      }
+                    } catch(e) {}
                   },
                   args: [STATE.sessionSeed],
                 }).catch(() => {});

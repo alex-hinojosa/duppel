@@ -18,6 +18,23 @@ import { installIframe } from './iframe.js';
   "use strict";
   const ctx = createContext();
   if (!ctx) return; // disabled via cookie
+
+  // Seed convergence: expose for background.js to call when the content
+  // script won the seed pre-injection race. Background's pre-injection
+  // or seedObserved handler calls __pg_converge__(correctSeed) to update
+  // the live profile before page scripts can observe it.
+  // Non-enumerable to minimize detection surface. Configurable for cleanup.
+  try {
+    Object.defineProperty(window, '__pg_converge__', {
+      value: function(correctSeed) {
+        ctx.convergeToSeed(correctSeed);
+      },
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
+  } catch(e) {}
+
   installNavigator(ctx);
   installScreen(ctx);
   installCanvas(ctx);

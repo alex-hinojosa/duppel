@@ -270,6 +270,16 @@
     }
     const profile = generateProfile(sessionSeed);
     const bioSeed = (profile.canvasSeed ^ 1112100685) >>> 0;
+    function convergeToSeed(correctSeed) {
+      if (correctSeed === sessionSeed) return false;
+      sessionSeed = correctSeed;
+      const newProfile = generateProfile(correctSeed);
+      for (const key of Object.keys(newProfile)) {
+        profile[key] = newProfile[key];
+      }
+      return true;
+    }
+    __name(convergeToSeed, "convergeToSeed");
     const currentTzOffset = getTimezoneOffset(profile.timezone);
     const _nativeStrings = /* @__PURE__ */ new WeakMap();
     const _spoofedProps = /* @__PURE__ */ new WeakMap();
@@ -375,7 +385,8 @@
       disguise,
       mulberry32,
       _nativeStrings,
-      _spoofedProps
+      _spoofedProps,
+      convergeToSeed
     };
   }
   var init_core = __esm({
@@ -1599,7 +1610,6 @@ importScripts(${JSON.stringify(origUrl)});`],
   // src/content/anti-fingerprint/iframe.js
   function installIframe(ctx) {
     const { ORIG, profile, disguise, spoof, applyCanvasNoise } = ctx;
-    const seed = profile.canvasSeed;
     const _patchedRealms = /* @__PURE__ */ new WeakSet();
     function noisyClone(src) {
       const c = document.createElement("canvas");
@@ -1608,7 +1618,7 @@ importScripts(${JSON.stringify(origUrl)});`],
       const cctx = c.getContext("2d");
       cctx.drawImage(src, 0, 0);
       const id = ORIG.getImageData.call(cctx, 0, 0, c.width, c.height);
-      applyCanvasNoise(id.data, seed);
+      applyCanvasNoise(id.data, profile.canvasSeed);
       cctx.putImageData(id, 0, 0);
       return c;
     }
@@ -1645,7 +1655,7 @@ importScripts(${JSON.stringify(origUrl)});`],
         win.CanvasRenderingContext2D.prototype.getImageData = disguise(
           function(...args) {
             const id = iOrigGID.apply(this, args);
-            applyCanvasNoise(id.data, seed);
+            applyCanvasNoise(id.data, profile.canvasSeed);
             return id;
           },
           "getImageData",
@@ -1660,7 +1670,7 @@ importScripts(${JSON.stringify(origUrl)});`],
             function(x, y, w, h, format, type, pixels) {
               iOrigRP.call(this, x, y, w, h, format, type, pixels);
               if (pixels && format === 6408 && type === 5121) {
-                applyCanvasNoise(pixels, seed);
+                applyCanvasNoise(pixels, profile.canvasSeed);
               }
             },
             "readPixels"
@@ -1675,7 +1685,7 @@ importScripts(${JSON.stringify(origUrl)});`],
             function(x, y, w, h, format, type, pixels) {
               iOrigRP2.call(this, x, y, w, h, format, type, pixels);
               if (pixels && format === 6408 && type === 5121) {
-                applyCanvasNoise(pixels, seed);
+                applyCanvasNoise(pixels, profile.canvasSeed);
               }
             },
             "readPixels"
@@ -1698,7 +1708,7 @@ importScripts(${JSON.stringify(origUrl)});`],
                   if (octx) {
                     const gid = iOrigOCGID || octx.getImageData.bind(octx);
                     const id = gid.call(octx, 0, 0, this.width, this.height);
-                    applyCanvasNoise(id.data, seed);
+                    applyCanvasNoise(id.data, profile.canvasSeed);
                     const tmp = new win.OffscreenCanvas(this.width, this.height);
                     const tmpCtx = tmp.getContext("2d");
                     tmpCtx.putImageData(id, 0, 0);
@@ -1714,7 +1724,7 @@ importScripts(${JSON.stringify(origUrl)});`],
           if (iOrigOCGID) {
             win.OffscreenCanvasRenderingContext2D.prototype.getImageData = disguise(function(...args) {
               const id = iOrigOCGID.apply(this, args);
-              applyCanvasNoise(id.data, seed);
+              applyCanvasNoise(id.data, profile.canvasSeed);
               return id;
             }, "getImageData", 4);
           }
@@ -1782,6 +1792,17 @@ importScripts(${JSON.stringify(origUrl)});`],
         "use strict";
         const ctx = createContext();
         if (!ctx) return;
+        try {
+          Object.defineProperty(window, "__pg_converge__", {
+            value: /* @__PURE__ */ __name(function(correctSeed) {
+              ctx.convergeToSeed(correctSeed);
+            }, "value"),
+            writable: false,
+            enumerable: false,
+            configurable: true
+          });
+        } catch (e) {
+        }
         installNavigator(ctx);
         installScreen(ctx);
         installCanvas(ctx);

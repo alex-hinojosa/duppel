@@ -17,7 +17,8 @@
 
 export function installIframe(ctx) {
   const { ORIG, profile, disguise, spoof, applyCanvasNoise } = ctx;
-  const seed = profile.canvasSeed;
+  // NOTE: profile.canvasSeed is read at call time (not captured here)
+  // so that seed convergence updates take effect immediately.
 
   // Track patched realms — WeakSet keyed by window object for idempotency
   const _patchedRealms = new WeakSet();
@@ -33,7 +34,7 @@ export function installIframe(ctx) {
     const cctx = c.getContext("2d");
     cctx.drawImage(src, 0, 0);
     const id = ORIG.getImageData.call(cctx, 0, 0, c.width, c.height);
-    applyCanvasNoise(id.data, seed);
+    applyCanvasNoise(id.data, profile.canvasSeed);
     cctx.putImageData(id, 0, 0);
     return c;
   }
@@ -83,7 +84,7 @@ export function installIframe(ctx) {
       win.CanvasRenderingContext2D.prototype.getImageData = disguise(
         function (...args) {
           const id = iOrigGID.apply(this, args);
-          applyCanvasNoise(id.data, seed);
+          applyCanvasNoise(id.data, profile.canvasSeed);
           return id;
         },
         "getImageData",
@@ -99,7 +100,7 @@ export function installIframe(ctx) {
           function (x, y, w, h, format, type, pixels) {
             iOrigRP.call(this, x, y, w, h, format, type, pixels);
             if (pixels && format === 0x1908 && type === 0x1401) {
-              applyCanvasNoise(pixels, seed);
+              applyCanvasNoise(pixels, profile.canvasSeed);
             }
           },
           "readPixels"
@@ -114,7 +115,7 @@ export function installIframe(ctx) {
           function (x, y, w, h, format, type, pixels) {
             iOrigRP2.call(this, x, y, w, h, format, type, pixels);
             if (pixels && format === 0x1908 && type === 0x1401) {
-              applyCanvasNoise(pixels, seed);
+              applyCanvasNoise(pixels, profile.canvasSeed);
             }
           },
           "readPixels"
@@ -140,7 +141,7 @@ export function installIframe(ctx) {
                 if (octx) {
                   const gid = iOrigOCGID || octx.getImageData.bind(octx);
                   const id = gid.call(octx, 0, 0, this.width, this.height);
-                  applyCanvasNoise(id.data, seed);
+                  applyCanvasNoise(id.data, profile.canvasSeed);
                   const tmp = new win.OffscreenCanvas(this.width, this.height);
                   const tmpCtx = tmp.getContext("2d");
                   tmpCtx.putImageData(id, 0, 0);
@@ -157,7 +158,7 @@ export function installIframe(ctx) {
           win.OffscreenCanvasRenderingContext2D.prototype.getImageData =
             disguise(function (...args) {
               const id = iOrigOCGID.apply(this, args);
-              applyCanvasNoise(id.data, seed);
+              applyCanvasNoise(id.data, profile.canvasSeed);
               return id;
             }, "getImageData", 4);
         }

@@ -213,6 +213,16 @@ test.describe('First-navigation UA alignment (v2 item 2)', () => {
     // it to background). We reload the page so bridge.js runs again.
     await page.reload({ waitUntil: 'domcontentloaded' });
 
+    // Re-read latest sessionSeed — restoreState() and onInstalled both call
+    // createIdentity() asynchronously, so STATE.sessionSeed can change between
+    // our initial read and the correction. The correction targets the LATEST
+    // STATE.sessionSeed, not necessarily the one we captured at test start.
+    const latestSeed = await sw.evaluate(async () => {
+      const data = await chrome.storage.session.get(['sessionSeed']);
+      return data.sessionSeed || null;
+    });
+    if (latestSeed) sessionSeed = latestSeed;
+
     // Wait for seedObserved handler to silently correct sessionStorage
     // Poll until sessionStorage has the correct session seed
     let correctedSeed: number | null = null;
