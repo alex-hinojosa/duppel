@@ -1174,6 +1174,91 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
     }
   });
 
+  test('cross-tab geometric canvas identity (contract assertion)', async ({ context }) => {
+    test.slow();
+
+    // CANVAS IDENTITY CONTRACT (rowan UID 405):
+    //   PhantomGrid canvas noise is deterministic for (seed, pixel_index, pixel_value).
+    //   Cross-tab equality holds when the pre-noise pixel buffer is deterministic.
+    //   Geometric content (solid fills, rectangles, gradients — no text) produces
+    //   bit-exact pixel buffers across page loads, so noise output is identical.
+    //
+    //   This is the HARD cross-tab assertion. For text-dependent external
+    //   measurements (BrowserLeaks), see browserleaks.spec.ts which is
+    //   measurement-only because Chrome's text rasterizer is not bit-exact.
+
+    const drawGeometric = `(() => {
+      const c = document.createElement('canvas');
+      c.width = 200; c.height = 100;
+      const ctx = c.getContext('2d');
+
+      // Solid fill
+      ctx.fillStyle = '#336699';
+      ctx.fillRect(0, 0, 200, 100);
+
+      // Rectangles (no text)
+      ctx.fillStyle = '#ff4400';
+      ctx.fillRect(10, 10, 60, 40);
+      ctx.fillStyle = 'rgba(0, 128, 255, 0.6)';
+      ctx.fillRect(40, 30, 80, 50);
+
+      // Stroked shapes
+      ctx.strokeStyle = '#00ff00';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(120, 15, 50, 70);
+
+      // Arc
+      ctx.beginPath();
+      ctx.arc(150, 50, 20, 0, Math.PI * 1.5);
+      ctx.fillStyle = '#ffcc00';
+      ctx.fill();
+
+      // Gradient
+      const grad = ctx.createLinearGradient(0, 80, 200, 100);
+      grad.addColorStop(0, '#000000');
+      grad.addColorStop(1, '#ffffff');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 85, 200, 15);
+
+      return c.toDataURL('image/png');
+    })()`;
+
+    const tab1 = await context.newPage();
+    await tab1.goto('about:blank');
+    await tab1.waitForTimeout(500);
+    const tdu1 = await tab1.evaluate(drawGeometric);
+
+    const tab2 = await context.newPage();
+    await tab2.goto('about:blank');
+    await tab2.waitForTimeout(500);
+    const tdu2 = await tab2.evaluate(drawGeometric);
+
+    await tab1.close();
+    await tab2.close();
+
+    // HARD ASSERTION: geometric canvas must be identical across tabs
+    expect(tdu1, 'geometric canvas toDataURL must not be empty').toBeTruthy();
+    expect(tdu2, 'geometric canvas toDataURL must not be empty').toBeTruthy();
+    expect(tdu1).toBe(tdu2);
+
+    console.log(`Geometric cross-tab: tab1=${(tdu1 as string).substring(0, 60)}...`);
+    console.log(`Geometric cross-tab: tab2=${(tdu2 as string).substring(0, 60)}...`);
+    console.log(`Geometric cross-tab: IDENTICAL=${tdu1 === tdu2}`);
+
+    writeBenchmarkResult('geometric-cross-tab-identity', {
+      service: 'Geometric Canvas Cross-Tab Identity (contract assertion)',
+      timestamp: new Date().toISOString(),
+      status: 'pass',
+      preRotation: {
+        tab1_prefix: (tdu1 as string).substring(0, 80),
+        tab2_prefix: (tdu2 as string).substring(0, 80),
+      },
+      postRotation: null,
+      sessionStable: tdu1 === tdu2,
+      rotationChanged: false,
+    });
+  });
+
   test('manifest compatibility: no load warnings with match_about_blank', async ({ context }) => {
     test.slow();
 

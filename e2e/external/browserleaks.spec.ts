@@ -212,8 +212,20 @@ test.describe('BrowserLeaks @external', () => {
     });
   });
 
-  test('canvas hash measurement across tabs', async ({ context }) => {
+  test('BrowserLeaks canvas cross-tab: text-dependent external measurement', async ({ context }) => {
     test.slow();
+
+    // TEXT-DEPENDENT MEASUREMENT — not an identity-stability proof.
+    //
+    // Canvas identity contract (rowan UID 405):
+    //   PhantomGrid canvas noise is deterministic for (seed, pixel_index, pixel_value).
+    //   Cross-tab equality is guaranteed only when the pre-noise pixel buffer is
+    //   deterministic across tabs. Text rendering (fillText) is NOT bit-exact
+    //   across page loads in Chrome due to subpixel positioning and GPU rasterization.
+    //   BrowserLeaks draws text, so its hash is a text-dependent external measurement.
+    //
+    // For the hard cross-tab identity assertion, see the geometric canvas test
+    // in canvas-bypass-proof.spec.ts which uses deterministic pixel content.
 
     const tab1 = await context.newPage();
     await tab1.goto('https://browserleaks.com/canvas', {
@@ -250,17 +262,12 @@ test.describe('BrowserLeaks @external', () => {
     await tab1.close();
     await tab2.close();
 
-    // Required: both hashes must be extractable
     expect(hash1, 'Required metric: canvas hash from tab 1 must be extractable').not.toBeNull();
     expect(hash2, 'Required metric: canvas hash from tab 2 must be extractable').not.toBeNull();
 
-    // BrowserLeaks extracts canvas through an about:blank iframe's contentDocument.
-    // After the iframe getter interception fix (b4828f0), each page creates a
-    // separate iframe realm with per-page canvas noise, so hashes differ across tabs.
-    // This is by-design — per-page noise is the stronger anti-fingerprinting posture.
     const stable = hash1 === hash2;
     writeBenchmarkResult('browserleaks-canvas-tabs', {
-      service: 'BrowserLeaks Canvas (cross-tab)',
+      service: 'BrowserLeaks Canvas (cross-tab text-dependent measurement)',
       timestamp: new Date().toISOString(),
       status: 'pass',
       preRotation: { hash_tab1: hash1, hash_tab2: hash2 },
@@ -269,8 +276,9 @@ test.describe('BrowserLeaks @external', () => {
       rotationChanged: false,
     });
 
+    console.log(`BL cross-tab: tab1=${hash1} tab2=${hash2} match=${stable}`);
     if (!stable) {
-      console.log('NOTE: BrowserLeaks canvas hashes differ across tabs — expected with per-page iframe noise');
+      console.log('NOTE: BrowserLeaks hashes differ — text rendering variance (not a PhantomGrid identity issue)');
     }
   });
 });

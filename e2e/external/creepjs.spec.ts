@@ -173,6 +173,66 @@ test.describe('CreepJS @external', () => {
     });
   });
 
+  test('same-profile two-tab measurement', async ({ context }) => {
+    test.slow();
+
+    // Same-profile cross-tab measurement (rowan UID 406 item 4).
+    // Reports whether CreepJS trust score, lie count, and fingerprint hash
+    // are stable or variant across two tabs in the same session.
+
+    const tab1 = await context.newPage();
+    await tab1.goto(CREEPJS_URL, { waitUntil: 'networkidle', timeout: 60_000 });
+    const metrics1 = await extractCreepJSMetrics(tab1);
+
+    const tab2 = await context.newPage();
+    await tab2.goto(CREEPJS_URL, { waitUntil: 'networkidle', timeout: 60_000 });
+    const metrics2 = await extractCreepJSMetrics(tab2);
+
+    await tab1.screenshot({ path: 'test-results/creepjs-tab1.png', fullPage: true });
+    await tab2.screenshot({ path: 'test-results/creepjs-tab2.png', fullPage: true });
+    await tab1.close();
+    await tab2.close();
+
+    // Required: both tabs must produce extractable metrics
+    expect(
+      metrics1.trustScore || metrics1.fingerprintHash,
+      'Required metric: CreepJS tab 1 must produce trust score or fingerprint hash',
+    ).toBeTruthy();
+    expect(
+      metrics2.trustScore || metrics2.fingerprintHash,
+      'Required metric: CreepJS tab 2 must produce trust score or fingerprint hash',
+    ).toBeTruthy();
+
+    const hashStable = metrics1.fingerprintHash === metrics2.fingerprintHash;
+    const trustStable = metrics1.trustScore === metrics2.trustScore;
+    const lieCountStable = metrics1.lieCount === metrics2.lieCount;
+
+    console.log(`CreepJS cross-tab: hash1=${metrics1.fingerprintHash} hash2=${metrics2.fingerprintHash} match=${hashStable}`);
+    console.log(`CreepJS cross-tab: trust1=${metrics1.trustScore} trust2=${metrics2.trustScore} match=${trustStable}`);
+    console.log(`CreepJS cross-tab: lies1=${metrics1.lieCount} lies2=${metrics2.lieCount} match=${lieCountStable}`);
+
+    if (!hashStable) {
+      console.log('NOTE: CreepJS fingerprint hash differs across tabs — per-page canvas noise produces different composite hash');
+    }
+
+    writeBenchmarkResult('creepjs-cross-tab', {
+      service: 'CreepJS (cross-tab same-profile measurement)',
+      timestamp: new Date().toISOString(),
+      status: 'pass',
+      preRotation: {
+        tab1_trustScore: metrics1.trustScore,
+        tab1_lieCount: String(metrics1.lieCount),
+        tab1_fingerprintHash: metrics1.fingerprintHash,
+        tab2_trustScore: metrics2.trustScore,
+        tab2_lieCount: String(metrics2.lieCount),
+        tab2_fingerprintHash: metrics2.fingerprintHash,
+      },
+      postRotation: null,
+      sessionStable: hashStable,
+      rotationChanged: false,
+    });
+  });
+
   test('lie count is observable', async ({ extensionPage }) => {
     test.slow();
     await extensionPage.goto(CREEPJS_URL, {
