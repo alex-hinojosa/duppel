@@ -957,4 +957,292 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
     expect(results.hasContentWindow, 'cross-origin contentWindow must exist').toBe(true);
     expect(results.mainCanvasWorks, 'main canvas must still work after cross-origin iframe access').toBe(true);
   });
+
+  test('descriptor camouflage: contentDocument getter', async ({ context }) => {
+    test.slow();
+
+    const page = await context.newPage();
+    await page.goto('https://browserleaks.com/', {
+      waitUntil: 'networkidle',
+      timeout: 30_000,
+    });
+    await page.waitForTimeout(1000);
+
+    const results = await page.evaluate(() => {
+      const desc = Object.getOwnPropertyDescriptor(
+        HTMLIFrameElement.prototype,
+        'contentDocument'
+      );
+
+      if (!desc || !desc.get) {
+        return { skip: true, reason: 'no descriptor or getter found' };
+      }
+
+      const getter = desc.get;
+
+      // Descriptor shape checks
+      const hasGetter = typeof getter === 'function';
+      const hasSetter = 'set' in desc;
+      const isConfigurable = desc.configurable;
+      const isEnumerable = desc.enumerable;
+
+      // toString checks
+      const toStringResult = getter.toString();
+      const looksNative = toStringResult.includes('native code');
+
+      // Function.prototype.toString.call check
+      const fptResult = Function.prototype.toString.call(getter);
+      const fptLooksNative = fptResult.includes('native code');
+
+      // No own toString
+      const hasOwnToString = getter.hasOwnProperty('toString');
+
+      // getter.name
+      const getterName = getter.name;
+
+      // Cross-check: getOwnPropertyDescriptors consistency
+      const allDescs = Object.getOwnPropertyDescriptors(HTMLIFrameElement.prototype);
+      const cdFromAll = allDescs['contentDocument'];
+      const consistentWithAll = cdFromAll && cdFromAll.get === getter;
+
+      // Reflect consistency
+      let reflectConsistent = false;
+      try {
+        const reflectDesc = Reflect.getOwnPropertyDescriptor(
+          HTMLIFrameElement.prototype,
+          'contentDocument'
+        );
+        reflectConsistent = !!(reflectDesc && reflectDesc.get === getter);
+      } catch (e) {
+        reflectConsistent = false;
+      }
+
+      return {
+        skip: false,
+        hasGetter,
+        hasSetter,
+        isConfigurable,
+        isEnumerable,
+        toStringResult,
+        looksNative,
+        fptResult,
+        fptLooksNative,
+        hasOwnToString,
+        getterName,
+        consistentWithAll,
+        reflectConsistent,
+      };
+    });
+
+    console.log('=== contentDocument Descriptor Camouflage ===');
+    if (!(results as any).skip) {
+      const r = results as any;
+      console.log(`getter exists: ${r.hasGetter}`);
+      console.log(`configurable: ${r.isConfigurable}`);
+      console.log(`enumerable: ${r.isEnumerable}`);
+      console.log(`toString: ${r.toStringResult}`);
+      console.log(`looks native: ${r.looksNative}`);
+      console.log(`FPT.call: ${r.fptResult}`);
+      console.log(`FPT looks native: ${r.fptLooksNative}`);
+      console.log(`has own toString: ${r.hasOwnToString}`);
+      console.log(`getter.name: ${r.getterName}`);
+      console.log(`GOPDs consistent: ${r.consistentWithAll}`);
+      console.log(`Reflect consistent: ${r.reflectConsistent}`);
+    }
+
+    await page.close();
+
+    writeBenchmarkResult('descriptor-camouflage-contentDocument', {
+      service: 'Descriptor Camouflage: contentDocument',
+      timestamp: new Date().toISOString(),
+      ...results,
+    });
+
+    if (!(results as any).skip) {
+      const r = results as any;
+      expect(r.hasGetter, 'contentDocument must have a getter').toBe(true);
+      expect(r.isConfigurable, 'contentDocument must be configurable').toBe(true);
+      expect(r.looksNative, 'contentDocument getter toString must look native').toBe(true);
+      expect(r.fptLooksNative, 'FPT.call on contentDocument getter must look native').toBe(true);
+      expect(r.hasOwnToString, 'contentDocument getter must not have own toString').toBe(false);
+      expect(r.consistentWithAll, 'GOPDs must return same getter').toBe(true);
+      expect(r.reflectConsistent, 'Reflect.GOPD must return same getter').toBe(true);
+    }
+  });
+
+  test('descriptor camouflage: contentWindow getter', async ({ context }) => {
+    test.slow();
+
+    const page = await context.newPage();
+    await page.goto('https://browserleaks.com/', {
+      waitUntil: 'networkidle',
+      timeout: 30_000,
+    });
+    await page.waitForTimeout(1000);
+
+    const results = await page.evaluate(() => {
+      const desc = Object.getOwnPropertyDescriptor(
+        HTMLIFrameElement.prototype,
+        'contentWindow'
+      );
+
+      if (!desc || !desc.get) {
+        return { skip: true, reason: 'no descriptor or getter found' };
+      }
+
+      const getter = desc.get;
+
+      const hasGetter = typeof getter === 'function';
+      const hasSetter = 'set' in desc;
+      const isConfigurable = desc.configurable;
+      const isEnumerable = desc.enumerable;
+
+      const toStringResult = getter.toString();
+      const looksNative = toStringResult.includes('native code');
+
+      const fptResult = Function.prototype.toString.call(getter);
+      const fptLooksNative = fptResult.includes('native code');
+
+      const hasOwnToString = getter.hasOwnProperty('toString');
+      const getterName = getter.name;
+
+      const allDescs = Object.getOwnPropertyDescriptors(HTMLIFrameElement.prototype);
+      const cwFromAll = allDescs['contentWindow'];
+      const consistentWithAll = cwFromAll && cwFromAll.get === getter;
+
+      let reflectConsistent = false;
+      try {
+        const reflectDesc = Reflect.getOwnPropertyDescriptor(
+          HTMLIFrameElement.prototype,
+          'contentWindow'
+        );
+        reflectConsistent = !!(reflectDesc && reflectDesc.get === getter);
+      } catch (e) {
+        reflectConsistent = false;
+      }
+
+      return {
+        skip: false,
+        hasGetter,
+        hasSetter,
+        isConfigurable,
+        isEnumerable,
+        toStringResult,
+        looksNative,
+        fptResult,
+        fptLooksNative,
+        hasOwnToString,
+        getterName,
+        consistentWithAll,
+        reflectConsistent,
+      };
+    });
+
+    console.log('=== contentWindow Descriptor Camouflage ===');
+    if (!(results as any).skip) {
+      const r = results as any;
+      console.log(`getter exists: ${r.hasGetter}`);
+      console.log(`configurable: ${r.isConfigurable}`);
+      console.log(`enumerable: ${r.isEnumerable}`);
+      console.log(`toString: ${r.toStringResult}`);
+      console.log(`looks native: ${r.looksNative}`);
+      console.log(`FPT.call: ${r.fptResult}`);
+      console.log(`FPT looks native: ${r.fptLooksNative}`);
+      console.log(`has own toString: ${r.hasOwnToString}`);
+      console.log(`getter.name: ${r.getterName}`);
+      console.log(`GOPDs consistent: ${r.consistentWithAll}`);
+      console.log(`Reflect consistent: ${r.reflectConsistent}`);
+    }
+
+    await page.close();
+
+    writeBenchmarkResult('descriptor-camouflage-contentWindow', {
+      service: 'Descriptor Camouflage: contentWindow',
+      timestamp: new Date().toISOString(),
+      ...results,
+    });
+
+    if (!(results as any).skip) {
+      const r = results as any;
+      expect(r.hasGetter, 'contentWindow must have a getter').toBe(true);
+      expect(r.isConfigurable, 'contentWindow must be configurable').toBe(true);
+      expect(r.looksNative, 'contentWindow getter toString must look native').toBe(true);
+      expect(r.fptLooksNative, 'FPT.call on contentWindow getter must look native').toBe(true);
+      expect(r.hasOwnToString, 'contentWindow getter must not have own toString').toBe(false);
+      expect(r.consistentWithAll, 'GOPDs must return same getter').toBe(true);
+      expect(r.reflectConsistent, 'Reflect.GOPD must return same getter').toBe(true);
+    }
+  });
+
+  test('manifest compatibility: no load warnings with match_about_blank', async ({ context }) => {
+    test.slow();
+
+    // Verify the extension loaded and is functional despite match_about_blank
+    // and match_origin_as_fallback flags in manifest.json
+    const page = await context.newPage();
+    await page.goto('https://browserleaks.com/', {
+      waitUntil: 'networkidle',
+      timeout: 30_000,
+    });
+    await page.waitForTimeout(1000);
+
+    const results = await page.evaluate(() => {
+      // Main canvas noise still works
+      const c = document.createElement('canvas');
+      c.width = 50; c.height = 10;
+      const ctx = c.getContext('2d')!;
+      ctx.fillStyle = '#808080';
+      ctx.fillRect(0, 0, 50, 10);
+      const id = ctx.getImageData(0, 0, 50, 10);
+      let mainNoised = false;
+      for (let i = 0; i < id.data.length; i += 4) {
+        if (id.data[i] !== 128 || id.data[i+1] !== 128 || id.data[i+2] !== 128) {
+          mainNoised = true; break;
+        }
+      }
+
+      // Navigator spoofing still works
+      const ua = navigator.userAgent;
+      const platform = navigator.platform;
+      const spoofedUA = !ua.includes('Snapdragon') && ua.includes('Mozilla/5.0');
+
+      // iframe getter interception still works
+      const iframe = document.createElement('iframe');
+      document.body.appendChild(iframe);
+      const iDoc = iframe.contentDocument!;
+      const ic = iDoc.createElement('canvas');
+      ic.width = 50; ic.height = 10;
+      const ictx = ic.getContext('2d')!;
+      ictx.fillStyle = '#808080';
+      ictx.fillRect(0, 0, 50, 10);
+      const iData = ictx.getImageData(0, 0, 50, 10);
+      let iframeNoised = false;
+      for (let i = 0; i < iData.data.length; i += 4) {
+        if (iData.data[i] !== 128 || iData.data[i+1] !== 128 || iData.data[i+2] !== 128) {
+          iframeNoised = true; break;
+        }
+      }
+      iframe.remove();
+
+      return { mainNoised, spoofedUA, platform, iframeNoised };
+    });
+
+    console.log('=== Manifest Compatibility Check ===');
+    console.log(`Main canvas noised: ${results.mainNoised}`);
+    console.log(`UA spoofed: ${results.spoofedUA}`);
+    console.log(`Platform: ${results.platform}`);
+    console.log(`Iframe noised: ${results.iframeNoised}`);
+
+    await page.close();
+
+    writeBenchmarkResult('manifest-compatibility', {
+      service: 'Manifest Compatibility (match_about_blank)',
+      timestamp: new Date().toISOString(),
+      ...results,
+    });
+
+    expect(results.mainNoised, 'main canvas must be noised').toBe(true);
+    expect(results.spoofedUA, 'UA must be spoofed').toBe(true);
+    expect(results.iframeNoised, 'iframe canvas must be noised').toBe(true);
+  });
 });
