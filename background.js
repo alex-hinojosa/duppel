@@ -225,20 +225,15 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
           sessionStorage.setItem("__pg_seed__", String(s));
         } else if (isSession && parseInt(existing, 10) !== s) {
           // Seed race: content script generated a random seed before
-          // pre-injection arrived. Overwrite sessionStorage and call
-          // the convergence function to update the live profile in place.
-          // This runs at document_start timing, before page scripts execute.
+          // pre-injection arrived. Overwrite sessionStorage and dispatch
+          // convergence event to update the live profile in place.
+          // dispatchEvent is synchronous — profile updates before this
+          // function returns. No window property needed.
           sessionStorage.setItem("__pg_seed__", String(s));
-          if (typeof window.__pg_converge__ === "function") {
-            window.__pg_converge__(s);
-          }
+          try {
+            window.dispatchEvent(new CustomEvent("__pgc", { detail: s }));
+          } catch(e2) {}
         }
-        // Primary cleanup: delete convergence hook immediately after use.
-        // Pre-injection is the first background path to run — once it has
-        // either converged or confirmed no mismatch, the hook is no longer
-        // needed. Deleting here ensures the hook is not observable by page
-        // scripts (pre-injection runs at document_start before page JS).
-        try { delete window.__pg_converge__; } catch(e2) {}
       } catch(e) {}
     },
     args: [seedToInject, STATE.identityMode === "session"],
@@ -740,13 +735,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   func: (s) => {
                     try {
                       sessionStorage.setItem("__pg_seed__", String(s));
-                      if (typeof window.__pg_converge__ === "function") {
-                        window.__pg_converge__(s);
-                      }
-                      // Cleanup: delete convergence hook after use. If pre-injection
-                      // already deleted it, this is a no-op (delete on non-existent
-                      // configurable property returns true silently).
-                      try { delete window.__pg_converge__; } catch(e2) {}
+                      // Dispatch convergence event. If the handler already
+                      // self-removed (pre-injection already converged), this
+                      // is a no-op — no listeners, event just drops.
+                      try {
+                        window.dispatchEvent(new CustomEvent("__pgc", { detail: s }));
+                      } catch(e2) {}
                     } catch(e) {}
                   },
                   args: [STATE.sessionSeed],

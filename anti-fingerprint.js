@@ -1792,17 +1792,12 @@ importScripts(${JSON.stringify(origUrl)});`],
         "use strict";
         const ctx = createContext();
         if (!ctx) return;
+        const _onConverge = /* @__PURE__ */ __name(function(e) {
+          ctx.convergeToSeed(e.detail);
+          window.removeEventListener("__pgc", _onConverge);
+        }, "_onConverge");
         try {
-          const _converge = /* @__PURE__ */ __name(function(correctSeed) {
-            ctx.convergeToSeed(correctSeed);
-          }, "_converge");
-          ctx._nativeStrings.set(_converge, "function __pg_converge__() { [native code] }");
-          Object.defineProperty(window, "__pg_converge__", {
-            value: _converge,
-            writable: false,
-            enumerable: false,
-            configurable: true
-          });
+          window.addEventListener("__pgc", _onConverge);
         } catch (e) {
         }
         installNavigator(ctx);
@@ -1816,7 +1811,7 @@ importScripts(${JSON.stringify(origUrl)});`],
         try {
           setTimeout(function() {
             try {
-              delete window.__pg_converge__;
+              window.removeEventListener("__pgc", _onConverge);
             } catch (e) {
             }
           }, 200);

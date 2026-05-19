@@ -1486,63 +1486,117 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
     expect(results.iframeNoised, 'iframe canvas must be noised').toBe(true);
   });
 
-  test('convergence hook detection profile (post-init cleanup)', async ({ context }) => {
+  test('adversarial: first inline script cannot observe convergence mechanism', async ({ context }) => {
     test.slow();
 
-    // ROWAN GATE 2: Prove that window.__pg_converge__ is not an
-    // unacceptable fingerprinting surface.
+    // ROWAN GATE (UID 413): Adversarial controlled-page test with the
+    // FIRST parser-executed inline <script> in <head> capturing detection
+    // state immediately.
     //
-    // The hook is defined at document_start (content script) and
-    // deleted via setTimeout(0) after install*() calls complete.
-    // By the time page scripts run, it should be gone.
+    // The convergence mechanism uses addEventListener('__pgc', handler)
+    // instead of a window property. Event listeners have zero observable
+    // window properties — they are not discoverable via in, Object.keys,
+    // GOPN, typeof, getOwnPropertyDescriptor, or propertyIsEnumerable.
+    // Only the non-standard DevTools getEventListeners() (not available
+    // to page scripts) can list them.
     //
-    // This test captures the detection profile at two points:
-    // (a) document_start via addInitScript — catches the hook while alive
-    // (b) after page load via evaluate — verifies cleanup completed
+    // This test serves adversarial HTML via page.route() with an inline
+    // <script> in <head> — the FIRST parser-executed page JavaScript,
+    // running at the earliest possible timing after document_start
+    // content scripts yield. It checks every detection vector for both
+    // the old property-based hook (__pg_converge__) and any __pg* globals.
 
+    const sw = context.serviceWorkers()[0];
+    expect(sw).toBeTruthy();
+    let sessionSeed: number | null = null;
+    for (let i = 0; i < 30; i++) {
+      sessionSeed = await sw.evaluate(async () => {
+        const data = await chrome.storage.session.get(['sessionSeed']);
+        return data.sessionSeed || null;
+      });
+      if (sessionSeed) break;
+      await new Promise(r => setTimeout(r, 150));
+    }
+    expect(sessionSeed).toBeTruthy();
+
+    const page = await context.newPage();
     const testUrl = getTestPageUrl();
 
-    // Capture detection profile at document_start timing
-    const page = await context.newPage();
-    await page.addInitScript(() => {
-      // Run at document_start — same timing as content script.
-      // Capture the hook's detection profile before cleanup.
-      (window as any).__pg_init_detection__ = {
-        inWindow: '__pg_converge__' in window,
-        inKeys: Object.keys(window).includes('__pg_converge__'),
-        typeof: typeof (window as any).__pg_converge__,
-        enumerable: window.propertyIsEnumerable('__pg_converge__'),
-      };
+    // Serve adversarial HTML with inline <script> in <head>
+    await page.route(testUrl, route => {
+      route.fulfill({
+        contentType: 'text/html',
+        body: `<!DOCTYPE html>
+<html><head><script>
+// ADVERSARIAL: first parser-executed inline script in <head>.
+// Runs at the earliest possible timing for page JavaScript:
+// after document_start content scripts yield, before DOMContentLoaded.
+window.__adv__ = {
+  timestamp: performance.now(),
+  // Old hook name: should never exist (event-based now)
+  pgConvergeIn: '__pg_converge__' in window,
+  pgConvergeTypeof: typeof window.__pg_converge__,
+  pgConvergeDescriptor: JSON.stringify(
+    Object.getOwnPropertyDescriptor(window, '__pg_converge__') || null),
+  // Broad scan: any __pg* property on window
+  pgGlobals: Object.getOwnPropertyNames(window)
+    .filter(function(n) { return n.indexOf('__pg') !== -1; }),
+  // Symbol scan: any symbol-keyed properties
+  pgSymbols: Object.getOwnPropertySymbols(window)
+    .map(function(s) { return s.toString(); })
+    .filter(function(s) { return s.indexOf('pg') !== -1; }),
+  // Broad convergence/phantom scan
+  suspiciousProps: Object.getOwnPropertyNames(window)
+    .filter(function(n) {
+      return n.indexOf('phantom') !== -1 ||
+             n.indexOf('converge') !== -1 ||
+             n.indexOf('__pgc') !== -1;
+    }),
+  // Check if keys/enumerable reveal anything
+  inKeys: Object.keys(window).filter(function(n) {
+    return n.indexOf('__pg') !== -1 || n.indexOf('phantom') !== -1;
+  }),
+  // Can we intercept the convergence event by listening?
+  // (We add a listener for __pgc to see if it fires during our observation)
+  eventCapture: null,
+};
+
+// Set up event listener to try to intercept convergence event
+var capturedEvents = [];
+window.addEventListener('__pgc', function(e) {
+  capturedEvents.push({ detail: e.detail, time: performance.now() });
+});
+// Store reference for later retrieval
+window.__adv_events__ = capturedEvents;
+</script></head>
+<body><canvas id="c" width="200" height="50"></canvas></body>
+</html>`
+      });
     });
 
     await page.goto(testUrl, { waitUntil: 'domcontentloaded' });
-    // Wait for setTimeout(0) cleanup to fire
-    await page.waitForTimeout(200);
+    await page.waitForTimeout(500);
 
     const result = await page.evaluate(() => {
-      // Post-init detection profile — hook should be cleaned up
-      const initDetection = (window as any).__pg_init_detection__ || null;
+      const adv = (window as any).__adv__;
+      const capturedEvents = (window as any).__adv_events__ || [];
 
-      // Post-cleanup: try every detection vector
-      const postInWindow = '__pg_converge__' in window;
-      const postInKeys = Object.keys(window).includes('__pg_converge__');
-      const postInGOPN = Object.getOwnPropertyNames(window).includes('__pg_converge__');
-      const postTypeof = typeof (window as any).__pg_converge__;
-      const postDescriptor = Object.getOwnPropertyDescriptor(window, '__pg_converge__');
-      const postEnumerable = window.propertyIsEnumerable('__pg_converge__');
+      // Post-load: repeat all checks
+      const postPgGlobals = Object.getOwnPropertyNames(window)
+        .filter(n => n.indexOf('__pg') !== -1)
+        .filter(n => n !== '__adv__' && n !== '__adv_events__');
+      const postSuspicious = Object.getOwnPropertyNames(window)
+        .filter(n => n.indexOf('phantom') !== -1 ||
+                     n.indexOf('converge') !== -1 ||
+                     (n.indexOf('__pgc') !== -1 && n !== '__adv__'));
 
-      // Scan for PhantomGrid-specific globals (exclude test's own __pg_init_detection__)
-      const suspiciousGlobals = Object.getOwnPropertyNames(window)
-        .filter(n => n !== '__pg_init_detection__')
-        .filter(n => n.includes('__pg') || n.includes('phantom') || n.includes('converge'));
-
-      // Check canvas noise is still working (hook cleanup didn't break anything)
+      // Canvas noise must still work
       const c = document.createElement('canvas');
       c.width = 50; c.height = 10;
-      const ctx = c.getContext('2d')!;
-      ctx.fillStyle = '#808080';
-      ctx.fillRect(0, 0, 50, 10);
-      const id = ctx.getImageData(0, 0, 50, 10);
+      const ctx2d = c.getContext('2d')!;
+      ctx2d.fillStyle = '#808080';
+      ctx2d.fillRect(0, 0, 50, 10);
+      const id = ctx2d.getImageData(0, 0, 50, 10);
       let noised = false;
       for (let i = 0; i < id.data.length; i += 4) {
         if (id.data[i] !== 128 || id.data[i+1] !== 128 || id.data[i+2] !== 128) {
@@ -1551,46 +1605,53 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
       }
 
       return {
-        initDetection,
-        postInWindow,
-        postInKeys,
-        postInGOPN,
-        postTypeof,
-        postDescriptor: postDescriptor ? JSON.stringify(postDescriptor) : null,
-        postEnumerable,
-        suspiciousGlobals,
-        canvasStillNoised: noised,
+        // Inline script (earliest page JS) results
+        inline: adv,
+        // Events captured by adversarial listener
+        capturedEventCount: capturedEvents.length,
+        capturedEvents: capturedEvents,
+        // Post-load results
+        postPgGlobals,
+        postSuspicious,
+        canvasNoised: noised,
       };
     }) as any;
 
     await page.close();
 
-    console.log('=== Convergence Hook Detection Profile ===');
-    console.log('--- At document_start (addInitScript) ---');
-    console.log(`  in window: ${result.initDetection?.inWindow}`);
-    console.log(`  in Object.keys: ${result.initDetection?.inKeys}`);
-    console.log(`  typeof: ${result.initDetection?.typeof}`);
-    console.log(`  enumerable: ${result.initDetection?.enumerable}`);
-    console.log('--- After page load (post-cleanup) ---');
-    console.log(`  in window: ${result.postInWindow}`);
-    console.log(`  in Object.keys: ${result.postInKeys}`);
-    console.log(`  in GOPN: ${result.postInGOPN}`);
-    console.log(`  typeof: ${result.postTypeof}`);
-    console.log(`  descriptor: ${result.postDescriptor}`);
-    console.log(`  enumerable: ${result.postEnumerable}`);
-    console.log(`  suspicious globals: ${JSON.stringify(result.suspiciousGlobals)}`);
-    console.log(`  canvas still noised: ${result.canvasStillNoised}`);
+    console.log('=== Adversarial Inline Script Detection Profile ===');
+    console.log('--- First parser-executed <head><script> ---');
+    console.log(`  __pg_converge__ in window: ${result.inline.pgConvergeIn}`);
+    console.log(`  __pg_converge__ typeof: ${result.inline.pgConvergeTypeof}`);
+    console.log(`  __pg_converge__ descriptor: ${result.inline.pgConvergeDescriptor}`);
+    console.log(`  __pg* globals: ${JSON.stringify(result.inline.pgGlobals)}`);
+    console.log(`  __pg* symbols: ${JSON.stringify(result.inline.pgSymbols)}`);
+    console.log(`  suspicious props: ${JSON.stringify(result.inline.suspiciousProps)}`);
+    console.log(`  suspicious keys: ${JSON.stringify(result.inline.inKeys)}`);
+    console.log('--- Adversarial event listener ---');
+    console.log(`  __pgc events captured: ${result.capturedEventCount}`);
+    if (result.capturedEventCount > 0) {
+      console.log(`  event details: ${JSON.stringify(result.capturedEvents)}`);
+    }
+    console.log('--- Post-load ---');
+    console.log(`  __pg* globals: ${JSON.stringify(result.postPgGlobals)}`);
+    console.log(`  suspicious props: ${JSON.stringify(result.postSuspicious)}`);
+    console.log(`  canvas noised: ${result.canvasNoised}`);
 
-    // Post-cleanup: hook must not be detectable
-    expect(result.postInWindow, '__pg_converge__ must not be in window after cleanup').toBe(false);
-    expect(result.postInKeys, '__pg_converge__ must not be in Object.keys after cleanup').toBe(false);
-    expect(result.postInGOPN, '__pg_converge__ must not be in GOPN after cleanup').toBe(false);
-    expect(result.postTypeof, '__pg_converge__ must be undefined after cleanup').toBe('undefined');
-    expect(result.postDescriptor, 'no descriptor after cleanup').toBeNull();
-    expect(result.postEnumerable, 'not enumerable after cleanup').toBe(false);
-    expect(result.suspiciousGlobals.length, 'no __pg* globals visible').toBe(0);
+    // First inline script must not see any PhantomGrid convergence artifacts
+    expect(result.inline.pgConvergeIn, 'no __pg_converge__ property at earliest page JS').toBe(false);
+    expect(result.inline.pgConvergeTypeof, 'typeof __pg_converge__ is undefined').toBe('undefined');
+    expect(result.inline.pgConvergeDescriptor, 'no descriptor for __pg_converge__').toBe('null');
+    expect(result.inline.pgGlobals.length, 'no __pg* globals at earliest page JS').toBe(0);
+    expect(result.inline.pgSymbols.length, 'no __pg* symbols at earliest page JS').toBe(0);
+    expect(result.inline.suspiciousProps.length, 'no suspicious props at earliest page JS').toBe(0);
+    expect(result.inline.inKeys.length, 'no suspicious keys at earliest page JS').toBe(0);
 
-    // Canvas noise must still work after hook cleanup
-    expect(result.canvasStillNoised, 'canvas noise must survive hook cleanup').toBe(true);
+    // Post-load: no PhantomGrid globals
+    expect(result.postPgGlobals.length, 'no __pg* globals post-load').toBe(0);
+    expect(result.postSuspicious.length, 'no suspicious props post-load').toBe(0);
+
+    // Canvas noise must work regardless of detection attempts
+    expect(result.canvasNoised, 'canvas noise functional').toBe(true);
   });
 });

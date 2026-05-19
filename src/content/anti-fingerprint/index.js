@@ -19,40 +19,26 @@ import { installIframe } from './iframe.js';
   const ctx = createContext();
   if (!ctx) return; // disabled via cookie
 
-  // Seed convergence: expose for background.js to call when the content
-  // script won the seed pre-injection race. Background's pre-injection
-  // or seedObserved handler calls __pg_converge__(correctSeed) to update
-  // the live profile before page scripts can observe it.
+  // Seed convergence via event listener — background.js dispatches a
+  // CustomEvent('__pgc') when the content script won the seed pre-injection
+  // race. Event listeners have zero observable window properties: not
+  // discoverable via in/Object.keys/GOPN/typeof/getOwnPropertyDescriptor.
+  // Only the non-standard DevTools getEventListeners() can list them,
+  // which is not available to page scripts.
   //
-  // Detection surface mitigation:
-  //   - Non-enumerable: invisible to for...in, Object.keys()
-  //   - toString disguised: returns "function __pg_converge__() { [native code] }"
-  //   - Cleanup: primary cleanup by background.js injection scripts (delete
-  //     immediately after use). Fallback cleanup via setTimeout(200) — well
-  //     after pre-injection (~1-5ms) but before fingerprinting scripts run
-  //     (DOMContentLoaded or later). Page scripts cannot detect this property.
+  // dispatchEvent() is synchronous — the handler runs inline during the
+  // dispatch call, so the profile is updated before the injection script
+  // returns. Same timing guarantee as a synchronous function call.
   //
-  // Protection boundary:
-  //   Path A (pre-injection, primary): runs at document_start timing via
-  //   chrome.scripting.executeScript(injectImmediately:true). Executes AFTER
-  //   this content script yields. Hook is still alive. Deterministic.
-  //   Path B (seedObserved, fallback): async round-trip via bridge.js →
-  //   background → executeScript. Best-effort only — hook may be cleaned up
-  //   before Path B arrives. Only needed if pre-injection skipped entirely
-  //   (STATE.sessionSeed=0 during initialization, <50ms window).
+  // The handler self-removes after first invocation (one-shot). The
+  // setTimeout fallback removes it if neither background path fires
+  // (e.g., STATE.sessionSeed=0 during initialization, <50ms window).
+  const _onConverge = function(e) {
+    ctx.convergeToSeed(e.detail);
+    window.removeEventListener('__pgc', _onConverge);
+  };
   try {
-    const _converge = function(correctSeed) {
-      ctx.convergeToSeed(correctSeed);
-    };
-    // Disguise toString to match native function signature
-    ctx._nativeStrings.set(_converge, 'function __pg_converge__() { [native code] }');
-
-    Object.defineProperty(window, '__pg_converge__', {
-      value: _converge,
-      writable: false,
-      enumerable: false,
-      configurable: true,
-    });
+    window.addEventListener('__pgc', _onConverge);
   } catch(e) {}
 
   installNavigator(ctx);
@@ -64,16 +50,15 @@ import { installIframe } from './iframe.js';
   installMisc(ctx);
   installIframe(ctx); // after installCanvas (needs ctx.applyCanvasNoise)
 
-  // Cleanup fallback: delete convergence hook after generous delay.
-  // Primary cleanup is in background.js — pre-injection and seedObserved
-  // correction scripts delete the hook immediately after use. This
-  // setTimeout is a final fallback for the rare case where neither
-  // background path runs (e.g., STATE.sessionSeed=0 during init).
-  // 200ms is well after pre-injection completes (~1-5ms) but before
-  // fingerprinting scripts run (DOMContentLoaded or later on real pages).
+  // Cleanup fallback: remove convergence listener after generous delay.
+  // Primary cleanup is the one-shot self-removal in _onConverge itself.
+  // This setTimeout catches the case where neither background path fires.
+  // 200ms is well after pre-injection (~1-5ms) but before fingerprinting
+  // scripts run (DOMContentLoaded or later on real pages). The listener
+  // is harmless even if not removed — it's not discoverable by page scripts.
   try {
     setTimeout(function() {
-      try { delete window.__pg_converge__; } catch(e) {}
+      try { window.removeEventListener('__pgc', _onConverge); } catch(e) {}
     }, 200);
   } catch(e) {}
 })();
