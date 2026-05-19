@@ -12,6 +12,7 @@ import { installWebGL } from './webgl.js';
 import { installAudio } from './audio.js';
 import { installBiometric } from './biometric.js';
 import { installMisc } from './misc.js';
+import { installIframe } from './iframe.js';
 
 (function() {
   "use strict";
@@ -24,4 +25,5 @@ import { installMisc } from './misc.js';
   installAudio(ctx);
   installBiometric(ctx);
   installMisc(ctx);
+  installIframe(ctx); // after installCanvas (needs ctx.applyCanvasNoise)
 })();

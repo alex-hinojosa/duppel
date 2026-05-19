@@ -777,24 +777,184 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
 
     await page.close();
 
-    const bypassed = r.accessible && r.mainNoised && !r.iframeNoised;
+    const fixed = r.accessible && r.mainNoised && r.iframeNoised;
 
     writeBenchmarkResult('bypass-proof-iframe-confirmed', {
       service: 'BrowserLeaks Bypass Proof (iframe contentDocument)',
       timestamp: new Date().toISOString(),
       ...r,
-      verdict: bypassed
-        ? 'CONFIRMED_IFRAME_BYPASS'
-        : r.accessible && !r.mainNoised
-          ? 'MAIN_NOT_NOISED'
-          : r.accessible && r.iframeNoised
-            ? 'IFRAME_ALSO_NOISED'
-            : 'INCONCLUSIVE',
+      verdict: fixed
+        ? 'IFRAME_PATCHED'
+        : r.accessible && r.mainNoised && !r.iframeNoised
+          ? 'IFRAME_BYPASS_STILL_OPEN'
+          : 'INCONCLUSIVE',
     });
 
-    // Key assertion: if main is noised but iframe is NOT, bypass is confirmed
-    if (r.accessible && r.mainNoised) {
-      expect(r.iframeNoised, 'iframe canvas should NOT be noised (confirming bypass)').toBe(false);
+    // After the iframe getter interception fix, both main and iframe must be noised
+    if (r.accessible) {
+      expect(r.mainNoised, 'main world canvas must be noised').toBe(true);
+      expect(r.iframeNoised, 'iframe canvas must be noised (getter interception fix)').toBe(true);
+      expect(r.dataURLsMatch, 'main and iframe dataURLs must match (same seed)').toBe(true);
     }
+  });
+
+  test('regression: dynamic about:blank iframe with synchronous access', async ({ context }) => {
+    test.slow();
+
+    // Simulates the BrowserLeaks pattern: create iframe, append, immediately
+    // access contentDocument.createElement('canvas') in the same JS turn.
+    const page = await context.newPage();
+    await page.goto('https://browserleaks.com/', {
+      waitUntil: 'networkidle',
+      timeout: 30_000,
+    });
+    await page.waitForTimeout(1000);
+
+    const results = await page.evaluate(() => {
+      // Main world gray noise check
+      const mc = document.createElement('canvas');
+      mc.width = 50; mc.height = 10;
+      const mctx = mc.getContext('2d')!;
+      mctx.fillStyle = '#808080';
+      mctx.fillRect(0, 0, 50, 10);
+      const mData = mctx.getImageData(0, 0, 50, 10);
+      let mainNoised = false;
+      for (let i = 0; i < mData.data.length; i += 4) {
+        if (mData.data[i] !== 128 || mData.data[i+1] !== 128 || mData.data[i+2] !== 128) {
+          mainNoised = true; break;
+        }
+      }
+
+      // Create iframe dynamically and access IMMEDIATELY (same JS turn)
+      const iframe = document.createElement('iframe');
+      document.body.appendChild(iframe);
+      // Synchronous access — no await, no setTimeout
+      const iDoc = iframe.contentDocument!;
+      const ic = iDoc.createElement('canvas');
+      ic.width = 50; ic.height = 10;
+      const ictx = ic.getContext('2d')!;
+      ictx.fillStyle = '#808080';
+      ictx.fillRect(0, 0, 50, 10);
+      const iData = ictx.getImageData(0, 0, 50, 10);
+      let iframeNoised = false;
+      for (let i = 0; i < iData.data.length; i += 4) {
+        if (iData.data[i] !== 128 || iData.data[i+1] !== 128 || iData.data[i+2] !== 128) {
+          iframeNoised = true; break;
+        }
+      }
+
+      // Also test via contentWindow path
+      const iframe2 = document.createElement('iframe');
+      document.body.appendChild(iframe2);
+      const iWin = iframe2.contentWindow as any;
+      const ic2 = iWin.document.createElement('canvas');
+      ic2.width = 50; ic2.height = 10;
+      const ictx2 = ic2.getContext('2d');
+      ictx2.fillStyle = '#808080';
+      ictx2.fillRect(0, 0, 50, 10);
+      const iData2 = ictx2.getImageData(0, 0, 50, 10);
+      let iframe2Noised = false;
+      for (let i = 0; i < iData2.data.length; i += 4) {
+        if (iData2.data[i] !== 128 || iData2.data[i+1] !== 128 || iData2.data[i+2] !== 128) {
+          iframe2Noised = true; break;
+        }
+      }
+
+      // Clean up
+      iframe.remove();
+      iframe2.remove();
+
+      return { mainNoised, iframeNoised, iframe2Noised };
+    });
+
+    console.log('=== Dynamic iframe Regression Results ===');
+    console.log(`Main noised: ${results.mainNoised}`);
+    console.log(`Dynamic iframe (contentDocument): ${results.iframeNoised}`);
+    console.log(`Dynamic iframe (contentWindow): ${results.iframe2Noised}`);
+
+    await page.close();
+
+    writeBenchmarkResult('regression-dynamic-iframe', {
+      service: 'Regression: Dynamic about:blank iframe',
+      timestamp: new Date().toISOString(),
+      ...results,
+    });
+
+    expect(results.mainNoised, 'main world must be noised').toBe(true);
+    expect(results.iframeNoised, 'dynamic iframe via contentDocument must be noised').toBe(true);
+    expect(results.iframe2Noised, 'dynamic iframe via contentWindow must be noised').toBe(true);
+  });
+
+  test('regression: cross-origin iframe preserves native behavior', async ({ context }) => {
+    test.slow();
+
+    const page = await context.newPage();
+    await page.goto('https://browserleaks.com/', {
+      waitUntil: 'networkidle',
+      timeout: 30_000,
+    });
+    await page.waitForTimeout(1000);
+
+    // Create cross-origin iframe and wait for it to load
+    const iframeHandle = await page.evaluateHandle(() => {
+      const iframe = document.createElement('iframe');
+      iframe.src = 'https://example.com';
+      document.body.appendChild(iframe);
+      return iframe;
+    });
+
+    // Wait for the iframe to navigate to the cross-origin URL
+    await page.waitForTimeout(3000);
+
+    const results = await page.evaluate((iframe) => {
+      // contentWindow should return a WindowProxy (not null)
+      const hasContentWindow = iframe.contentWindow !== null;
+
+      // After cross-origin load, contentDocument should be null or throw
+      let contentDocResult: string;
+      try {
+        const doc = iframe.contentDocument;
+        contentDocResult = doc === null ? 'null' : 'accessible';
+      } catch (e) {
+        contentDocResult = `threw: ${(e as Error).name}`;
+      }
+
+      // patchIframeRealm should NOT have crashed — verify main canvas works
+      const mainCanvasWorks = (() => {
+        try {
+          const c = document.createElement('canvas');
+          c.width = 10; c.height = 10;
+          const ctx = c.getContext('2d')!;
+          ctx.fillStyle = '#ff0000';
+          ctx.fillRect(0, 0, 10, 10);
+          const url = c.toDataURL();
+          return url.startsWith('data:image/png');
+        } catch {
+          return false;
+        }
+      })();
+
+      iframe.remove();
+
+      return { hasContentWindow, contentDocResult, mainCanvasWorks };
+    }, iframeHandle);
+
+    console.log('=== Cross-Origin iframe Compatibility Results ===');
+    console.log(`contentWindow exists: ${results.hasContentWindow}`);
+    console.log(`contentDocument result: ${results.contentDocResult}`);
+    console.log(`Main canvas still works: ${results.mainCanvasWorks}`);
+
+    await page.close();
+
+    writeBenchmarkResult('regression-cross-origin-iframe', {
+      service: 'Regression: Cross-origin iframe compatibility',
+      timestamp: new Date().toISOString(),
+      ...results,
+    });
+
+    // Cross-origin contentDocument should be null (not throw, not crash)
+    expect(results.contentDocResult, 'cross-origin contentDocument must be null or throw').toMatch(/null|threw/);
+    expect(results.hasContentWindow, 'cross-origin contentWindow must exist').toBe(true);
+    expect(results.mainCanvasWorks, 'main canvas must still work after cross-origin iframe access').toBe(true);
   });
 });

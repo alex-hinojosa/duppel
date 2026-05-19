@@ -1596,6 +1596,176 @@ importScripts(${JSON.stringify(origUrl)});`],
     }
   });
 
+  // src/content/anti-fingerprint/iframe.js
+  function installIframe(ctx) {
+    const { ORIG, profile, disguise, spoof, applyCanvasNoise } = ctx;
+    const seed = profile.canvasSeed;
+    const _patchedRealms = /* @__PURE__ */ new WeakSet();
+    function noisyClone(src) {
+      const c = document.createElement("canvas");
+      c.width = src.width;
+      c.height = src.height;
+      const cctx = c.getContext("2d");
+      cctx.drawImage(src, 0, 0);
+      const id = ORIG.getImageData.call(cctx, 0, 0, c.width, c.height);
+      applyCanvasNoise(id.data, seed);
+      cctx.putImageData(id, 0, 0);
+      return c;
+    }
+    __name(noisyClone, "noisyClone");
+    function patchIframeRealm(win) {
+      if (!win) return;
+      if (_patchedRealms.has(win)) return;
+      try {
+        if (!win.HTMLCanvasElement) return;
+      } catch (e) {
+        return;
+      }
+      _patchedRealms.add(win);
+      try {
+        const iOrigTDU = win.HTMLCanvasElement.prototype.toDataURL;
+        const iOrigTB = win.HTMLCanvasElement.prototype.toBlob;
+        const iOrigGID = win.CanvasRenderingContext2D.prototype.getImageData;
+        win.HTMLCanvasElement.prototype.toDataURL = disguise(function(...args) {
+          try {
+            if (this.width > 0 && this.height > 0)
+              return iOrigTDU.apply(noisyClone(this), args);
+          } catch (e) {
+          }
+          return iOrigTDU.apply(this, args);
+        }, "toDataURL");
+        win.HTMLCanvasElement.prototype.toBlob = disguise(function(cb, ...args) {
+          try {
+            if (this.width > 0 && this.height > 0)
+              return iOrigTB.call(noisyClone(this), cb, ...args);
+          } catch (e) {
+          }
+          return iOrigTB.call(this, cb, ...args);
+        }, "toBlob");
+        win.CanvasRenderingContext2D.prototype.getImageData = disguise(
+          function(...args) {
+            const id = iOrigGID.apply(this, args);
+            applyCanvasNoise(id.data, seed);
+            return id;
+          },
+          "getImageData",
+          4
+        );
+      } catch (e) {
+      }
+      try {
+        if (win.WebGLRenderingContext) {
+          const iOrigRP = win.WebGLRenderingContext.prototype.readPixels;
+          win.WebGLRenderingContext.prototype.readPixels = disguise(
+            function(x, y, w, h, format, type, pixels) {
+              iOrigRP.call(this, x, y, w, h, format, type, pixels);
+              if (pixels && format === 6408 && type === 5121) {
+                applyCanvasNoise(pixels, seed);
+              }
+            },
+            "readPixels"
+          );
+        }
+      } catch (e) {
+      }
+      try {
+        if (win.WebGL2RenderingContext) {
+          const iOrigRP2 = win.WebGL2RenderingContext.prototype.readPixels;
+          win.WebGL2RenderingContext.prototype.readPixels = disguise(
+            function(x, y, w, h, format, type, pixels) {
+              iOrigRP2.call(this, x, y, w, h, format, type, pixels);
+              if (pixels && format === 6408 && type === 5121) {
+                applyCanvasNoise(pixels, seed);
+              }
+            },
+            "readPixels"
+          );
+        }
+      } catch (e) {
+      }
+      try {
+        if (win.OffscreenCanvas) {
+          const iOrigOCB = win.OffscreenCanvas.prototype.convertToBlob;
+          let iOrigOCGID = null;
+          if (win.OffscreenCanvasRenderingContext2D) {
+            iOrigOCGID = win.OffscreenCanvasRenderingContext2D.prototype.getImageData;
+          }
+          win.OffscreenCanvas.prototype.convertToBlob = disguise(
+            function(...args) {
+              try {
+                if (this.width > 0 && this.height > 0) {
+                  const octx = this.getContext("2d");
+                  if (octx) {
+                    const gid = iOrigOCGID || octx.getImageData.bind(octx);
+                    const id = gid.call(octx, 0, 0, this.width, this.height);
+                    applyCanvasNoise(id.data, seed);
+                    const tmp = new win.OffscreenCanvas(this.width, this.height);
+                    const tmpCtx = tmp.getContext("2d");
+                    tmpCtx.putImageData(id, 0, 0);
+                    return iOrigOCB.apply(tmp, args);
+                  }
+                }
+              } catch (e) {
+              }
+              return iOrigOCB.apply(this, args);
+            },
+            "convertToBlob"
+          );
+          if (iOrigOCGID) {
+            win.OffscreenCanvasRenderingContext2D.prototype.getImageData = disguise(function(...args) {
+              const id = iOrigOCGID.apply(this, args);
+              applyCanvasNoise(id.data, seed);
+              return id;
+            }, "getImageData", 4);
+          }
+        }
+      } catch (e) {
+      }
+    }
+    __name(patchIframeRealm, "patchIframeRealm");
+    const cdDesc = ORIG.getOwnPropertyDescriptor.call(
+      Object,
+      HTMLIFrameElement.prototype,
+      "contentDocument"
+    );
+    if (cdDesc && cdDesc.get) {
+      const origCDGetter = cdDesc.get;
+      spoof(HTMLIFrameElement.prototype, "contentDocument", function() {
+        const doc = origCDGetter.call(this);
+        if (doc) {
+          try {
+            patchIframeRealm(doc.defaultView);
+          } catch (e) {
+          }
+        }
+        return doc;
+      });
+    }
+    const cwDesc = ORIG.getOwnPropertyDescriptor.call(
+      Object,
+      HTMLIFrameElement.prototype,
+      "contentWindow"
+    );
+    if (cwDesc && cwDesc.get) {
+      const origCWGetter = cwDesc.get;
+      spoof(HTMLIFrameElement.prototype, "contentWindow", function() {
+        const win = origCWGetter.call(this);
+        if (win) {
+          try {
+            patchIframeRealm(win);
+          } catch (e) {
+          }
+        }
+        return win;
+      });
+    }
+  }
+  var init_iframe = __esm({
+    "src/content/anti-fingerprint/iframe.js"() {
+      __name(installIframe, "installIframe");
+    }
+  });
+
   // src/content/anti-fingerprint/index.js
   var require_index = __commonJS({
     "src/content/anti-fingerprint/index.js"() {
@@ -1607,6 +1777,7 @@ importScripts(${JSON.stringify(origUrl)});`],
       init_audio();
       init_biometric();
       init_misc();
+      init_iframe();
       (function() {
         "use strict";
         const ctx = createContext();
@@ -1618,6 +1789,7 @@ importScripts(${JSON.stringify(origUrl)});`],
         installAudio(ctx);
         installBiometric(ctx);
         installMisc(ctx);
+        installIframe(ctx);
       })();
     }
   });
