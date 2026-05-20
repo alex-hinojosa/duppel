@@ -1,4 +1,4 @@
-# PhantomGrid
+# Duppel
 
 Anti-fingerprinting browser extension for Chrome (Manifest V3). Spoofs browser fingerprint surfaces, strips tracking parameters, poisons tracker data collection, and rotates identity on a schedule — all without breaking normal browsing.
 
@@ -22,14 +22,14 @@ Anti-fingerprinting browser extension for Chrome (Manifest V3). Spoofs browser f
 
 1. Clone the repository:
    ```
-   git clone https://github.com/alex-hinojosa/phantomgrid.git
+   git clone https://github.com/alex-hinojosa/duppel.git
    ```
 
 2. Open Chrome and navigate to `chrome://extensions/`
 
 3. Enable **Developer mode** (toggle in the top right)
 
-4. Click **Load unpacked** and select the cloned `phantomgrid` directory
+4. Click **Load unpacked** and select the cloned `duppel` directory
 
 The extension will activate immediately on all pages.
 
