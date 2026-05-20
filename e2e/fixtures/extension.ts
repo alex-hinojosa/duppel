@@ -1,5 +1,5 @@
 /**
- * Custom Playwright fixture that launches Chromium with PhantomGrid loaded.
+ * Custom Playwright fixture that launches Chromium with Duppel loaded.
  *
  * Uses chromium.launchPersistentContext() with --load-extension — the only
  * Playwright API that supports Chrome extension loading.
@@ -81,7 +81,7 @@ export const test = base.extend<{
   context: async ({}, use) => {
     const port = await ensureServer();
     const userDataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'phantomgrid-test-')
+      path.join(os.tmpdir(), 'duppel-test-')
     );
 
     const context = await chromium.launchPersistentContext(userDataDir, {

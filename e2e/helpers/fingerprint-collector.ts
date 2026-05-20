@@ -165,12 +165,12 @@ export async function collectFull(page: Page): Promise<FullFP> {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = '#000';
     ctx.font = '14px Arial';
-    ctx.fillText('PhantomGrid test probe', 10, 30);
+    ctx.fillText('Duppel test probe', 10, 30);
     const canvasFP = canvas.toDataURL();
 
     // measureText
     ctx.font = '16px Arial';
-    const mt = ctx.measureText('PhantomGrid rotation probe').width;
+    const mt = ctx.measureText('Duppel rotation probe').width;
 
     // WebGL
     let glVendor: string | null = null;

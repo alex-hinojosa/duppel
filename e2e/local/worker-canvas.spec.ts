@@ -306,7 +306,7 @@ test.describe('Worker canvas noise (OffscreenCanvas + WebGL)', () => {
   });
 
   // ── Module Worker (served URL) ─────────────────────────────────────
-  // PhantomGrid's Worker constructor wraps ALL module workers into blob
+  // Duppel's Worker constructor wraps ALL module workers into blob
   // URL module workers internally (misc.js:206-216), regardless of whether
   // the original URL is blob or HTTP. In Chromium for Testing (Playwright's
   // bundled browser), blob URL module workers silently fail to execute.
@@ -642,7 +642,7 @@ test.describe('Worker canvas noise (OffscreenCanvas + WebGL)', () => {
     });
     console.log(`Nested Worker investigation: ${result.details}`);
 
-    // Outer worker MUST be noised (PhantomGrid wraps it)
+    // Outer worker MUST be noised (Duppel wraps it)
     expect(result.outerNoised, 'Outer worker should have canvas noise').toBe(true);
 
     // Nested workers should inherit canvas noise via the injected

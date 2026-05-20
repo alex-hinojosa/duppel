@@ -1,5 +1,5 @@
 /**
- * PhantomGrid — Behavioral Poisoning Module (v2)
+ * Duppel — Behavioral Poisoning Module (v2)
  *
  * Fires fake tracking beacons to pollute ad-tech profiles.
  * Imported by background.js.

@@ -1,7 +1,7 @@
 import { test, expect } from '../fixtures/extension';
 
 /**
- * PhantomGrid v2 Item 3: Behavioral Biometric Precision-Reduction Layer
+ * Duppel v2 Item 3: Behavioral Biometric Precision-Reduction Layer
  *
  * Gate 7 regression tests:
  * 1. Deterministic replay — same event produces identical reads

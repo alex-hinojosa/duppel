@@ -1,4 +1,4 @@
-// Module worker test script — served over HTTP so PhantomGrid can wrap it
+// Module worker test script — served over HTTP so Duppel can wrap it
 // via await import("http://...") instead of import("blob:...") which fails.
 self.onmessage = function() {
   var oc = new OffscreenCanvas(50, 10);

@@ -1,7 +1,7 @@
 import { test, expect, getTestPageUrl } from '../fixtures/extension';
 
 /**
- * PhantomGrid v2 Item 2: First-Navigation UA Alignment
+ * Duppel v2 Item 2: First-Navigation UA Alignment
  *
  * Tests that the cold-start race condition is resolved:
  * - Session seed is pre-injected via chrome.tabs.onUpdated + injectImmediately

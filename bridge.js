@@ -2,7 +2,7 @@
 const B = typeof browser !== "undefined" ? browser : chrome;
 
 /**
- * PhantomGrid — Bridge Content Script (ISOLATED world)
+ * Duppel — Bridge Content Script (ISOLATED world)
  *
  * Rowan pass 5 rewrite (2026-05-08):
  * - Reads seed from sessionStorage (shared with MAIN world) and syncs

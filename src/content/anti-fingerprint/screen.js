@@ -1,5 +1,5 @@
 /**
- * PhantomGrid — Screen Spoofing Module
+ * Duppel — Screen Spoofing Module
  * Screen dimensions, position, DPR, visualViewport, matchMedia evaluator.
  */
 

@@ -1,5 +1,5 @@
 /**
- * PhantomGrid — Miscellaneous Spoofing Module
+ * Duppel — Miscellaneous Spoofing Module
  * Timezone spoofing, enumerateDevices, Worker navigator overrides.
  */
 

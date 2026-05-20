@@ -13,7 +13,7 @@ test.describe('Canvas noise', () => {
       ctx.fillRect(0, 0, c.width, c.height);
       ctx.fillStyle = '#000';
       ctx.font = '14px Arial';
-      ctx.fillText('PhantomGrid test probe', 10, 30);
+      ctx.fillText('Duppel test probe', 10, 30);
 
       const results: string[] = [];
       for (let i = 0; i < 20; i++) results.push(c.toDataURL());
@@ -68,7 +68,7 @@ test.describe('Canvas noise', () => {
         ctx.fillRect(0, 0, c.width, c.height);
         ctx.fillStyle = '#000';
         ctx.font = '14px Arial';
-        ctx.fillText('PhantomGrid test probe', 10, 30);
+        ctx.fillText('Duppel test probe', 10, 30);
       }
 
       draw();

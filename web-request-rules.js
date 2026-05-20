@@ -1,5 +1,5 @@
 /**
- * PhantomGrid — Firefox webRequest rules.
+ * Duppel — Firefox webRequest rules.
  * Replaces Chrome's declarativeNetRequest (rules/tracking.json + dynamic UA rule).
  * Loaded via manifest.firefox.json background.scripts before background.firefox.js.
  */

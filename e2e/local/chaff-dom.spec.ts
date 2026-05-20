@@ -1,7 +1,7 @@
 import { test, expect } from '../fixtures/extension';
 
 /**
- * PhantomGrid v2 Item 4: Chaff Engine Redesign — DOM Credibility Layer
+ * Duppel v2 Item 4: Chaff Engine Redesign — DOM Credibility Layer
  *
  * Tests DOM chaff injection via the interaction-coupled path:
  * 1. DOM chaff is interaction-coupled (applied on click, not on message arrival)

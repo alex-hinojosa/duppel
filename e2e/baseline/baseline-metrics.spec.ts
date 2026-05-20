@@ -1,7 +1,7 @@
 /**
  * Vanilla Chrome baseline benchmark.
  *
- * Runs the same fingerprinting services WITHOUT PhantomGrid to establish
+ * Runs the same fingerprinting services WITHOUT Duppel to establish
  * baseline metrics for comparison. Covers:
  *   - BrowserLeaks: canvas hash, WebGL vendor/renderer, navigator properties
  *   - FingerprintJS: visitorId (should be stable across tabs without noise)

@@ -1,5 +1,5 @@
 /**
- * PhantomGrid — Background Service Worker
+ * Duppel — Background Service Worker
  * Manages identity rotation, cookie cleanup, tracker monitoring,
  * and fake beacon generation.
  */
@@ -73,7 +73,7 @@ async function applyWebRTCPolicy() {
     });
   } catch (e) {
     // Log failure visibly — do not silently claim protection
-    console.error('[PhantomGrid] Failed to set WebRTC policy:', e);
+    console.error('[Duppel] Failed to set WebRTC policy:', e);
   }
 }
 applyWebRTCPolicy();

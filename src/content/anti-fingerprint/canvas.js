@@ -1,5 +1,5 @@
 /**
- * PhantomGrid — Canvas Fingerprint Noise Module
+ * Duppel — Canvas Fingerprint Noise Module
  * Canvas 2D noise, measureText with font probe defense.
  */
 

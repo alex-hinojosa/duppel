@@ -86,7 +86,7 @@ test.describe('FingerprintJS @external', () => {
     expect(id1, 'Required metric: visitorId from tab 1 must be extractable').not.toBeNull();
     expect(id2, 'Required metric: visitorId from tab 2 must be extractable').not.toBeNull();
 
-    // PhantomGrid's per-page canvas noise means FingerprintJS will compute
+    // Duppel's per-page canvas noise means FingerprintJS will compute
     // a different visitorId per tab. This is by design — per-page randomness
     // is the stronger anti-fingerprinting posture. Record as measurement.
     const stable = id1 === id2;

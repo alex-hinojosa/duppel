@@ -53,7 +53,7 @@ test.describe('Worker navigator parity', () => {
 
   test('Module Worker navigator matches window (Blob URL)', async ({ extensionPage }) => {
     // Module workers from Blob URLs are not universally supported in Chromium.
-    // Probe support first; skip if unsupported (not a PhantomGrid bug).
+    // Probe support first; skip if unsupported (not a Duppel bug).
     const supported = await extensionPage.evaluate(() => {
       return new Promise<boolean>((resolve) => {
         try {

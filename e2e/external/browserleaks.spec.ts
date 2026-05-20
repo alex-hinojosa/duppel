@@ -80,12 +80,12 @@ test.describe('BrowserLeaks @external', () => {
 
     expect(postCanvasHash, 'Required metric: post-rotation canvas hash must be extractable').not.toBeNull();
 
-    // BrowserLeaks may compute its hash from a method that PhantomGrid's
+    // BrowserLeaks may compute its hash from a method that Duppel's
     // per-page canvas noise doesn't affect. Log the outcome as a measurement —
     // the rotation test suite validates canvas rotation via our own collector.
     const rotationChanged = preCanvasHash !== postCanvasHash;
     if (!rotationChanged) {
-      console.warn('NOTE: BrowserLeaks canvas hash unchanged after rotation — hash may be computed from a surface PhantomGrid does not noise');
+      console.warn('NOTE: BrowserLeaks canvas hash unchanged after rotation — hash may be computed from a surface Duppel does not noise');
     }
 
     writeBenchmarkResult('browserleaks-canvas', {
@@ -218,7 +218,7 @@ test.describe('BrowserLeaks @external', () => {
     // TEXT-DEPENDENT MEASUREMENT — not an identity-stability proof.
     //
     // Canvas identity contract (rowan UID 405):
-    //   PhantomGrid canvas noise is deterministic for (seed, pixel_index, pixel_value).
+    //   Duppel canvas noise is deterministic for (seed, pixel_index, pixel_value).
     //   Cross-tab equality is guaranteed only when the pre-noise pixel buffer is
     //   deterministic across tabs. Text rendering (fillText) is NOT bit-exact
     //   across page loads in Chrome due to subpixel positioning and GPU rasterization.
@@ -278,7 +278,7 @@ test.describe('BrowserLeaks @external', () => {
 
     console.log(`BL cross-tab: tab1=${hash1} tab2=${hash2} match=${stable}`);
     if (!stable) {
-      console.log('NOTE: BrowserLeaks hashes differ — text rendering variance (not a PhantomGrid identity issue)');
+      console.log('NOTE: BrowserLeaks hashes differ — text rendering variance (not a Duppel identity issue)');
     }
   });
 });

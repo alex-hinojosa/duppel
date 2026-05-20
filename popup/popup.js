@@ -2,7 +2,7 @@
 const B = typeof browser !== "undefined" ? browser : chrome;
 
 /**
- * PhantomGrid — Popup UI Controller
+ * Duppel — Popup UI Controller
  */
 
 const chaosDescriptions = {

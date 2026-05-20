@@ -1,5 +1,5 @@
 /**
- * PhantomGrid — iframe Realm Canvas Protection
+ * Duppel — iframe Realm Canvas Protection
  *
  * Intercepts HTMLIFrameElement.prototype.contentDocument/contentWindow
  * getters to patch canvas prototypes in same-origin iframe realms lazily

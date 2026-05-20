@@ -1,5 +1,5 @@
 {
-  "name": "phantomgrid-e2e",
+  "name": "duppel-e2e",
   "private": true,
   "scripts": {
     "build": "node esbuild.config.mjs",
@@ -35,14 +35,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alex-hinojosa/phantomgrid.git"
+    "url": "git+https://github.com/alex-hinojosa/duppel.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "bugs": {
-    "url": "https://github.com/alex-hinojosa/phantomgrid/issues"
+    "url": "https://github.com/alex-hinojosa/duppel/issues"
   },
-  "homepage": "https://github.com/alex-hinojosa/phantomgrid#readme"
+  "homepage": "https://github.com/alex-hinojosa/duppel#readme"
 }

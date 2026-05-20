@@ -520,7 +520,7 @@ test.describe('Session identity — regression checks (v2 item 1)', () => {
       ctx.fillRect(0, 0, 200, 50);
       ctx.fillStyle = '#000';
       ctx.font = '14px Arial';
-      ctx.fillText('PhantomGrid test', 10, 30);
+      ctx.fillText('Duppel test', 10, 30);
       return { drawn: true, dataUrl: c.toDataURL().substring(0, 50) };
     });
     expect(result.drawn).toBe(true);

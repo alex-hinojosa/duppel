@@ -1,16 +1,16 @@
 /**
- * PhantomGrid — Deterministic Noise Regression Tests
+ * Duppel — Deterministic Noise Regression Tests
  *
  * Tests that the anti-fingerprint spoofing produces stable, deterministic
  * output when probed repeatedly with the same input. Per rowan pass 5:
  * "call the same canvas/text/audio probe N times and assert byte-for-byte
  * stability within a page session, then assert changed output after rotation."
  *
- * Load tests/regression.html with the PhantomGrid extension active.
+ * Load tests/regression.html with the Duppel extension active.
  * All stability tests should PASS.
  *
  * Rotation test: captures fingerprints to localStorage. After rotating
- * the PhantomGrid identity (via popup or extension reload), reload this
+ * the Duppel identity (via popup or extension reload), reload this
  * page. The rotation suite will compare old vs new fingerprints and
  * assert they differ.
  *
@@ -80,7 +80,7 @@
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = "#000";
     ctx.font = "14px Arial";
-    ctx.fillText("PhantomGrid test probe", 10, 30);
+    ctx.fillText("Duppel test probe", 10, 30);
     ctx.strokeStyle = "#fff";
     ctx.beginPath();
     ctx.arc(150, 25, 15, 0, Math.PI * 2);
@@ -112,7 +112,7 @@
     // measureText fingerprint
     const ctx = canvas.getContext("2d");
     ctx.font = "16px Arial";
-    fp.measureText = ctx.measureText("PhantomGrid rotation probe").width;
+    fp.measureText = ctx.measureText("Duppel rotation probe").width;
 
     // Navigator fingerprint
     fp.userAgent = navigator.userAgent;
@@ -269,7 +269,7 @@
       "abcdefghijklmnopqrstuvwxyz",
       "0123456789",
       "The quick brown fox jumps over the lazy dog",
-      "PhantomGrid fingerprint defense",
+      "Duppel fingerprint defense",
     ];
     let multiStable = true;
     for (const str of testStrings) {
@@ -657,7 +657,7 @@
         localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
       } catch(e) {}
       log("info", "BASELINE CAPTURED. To test rotation:");
-      log("info", "  1. Rotate identity via PhantomGrid popup (or reload extension)");
+      log("info", "  1. Rotate identity via Duppel popup (or reload extension)");
       log("info", "  2. Reload this page");
       log("info", "  3. The rotation suite will compare old vs new fingerprints");
       log("info", "Current canvas hash: " + current.canvas.substring(0, 60) + "...");
@@ -836,7 +836,7 @@
     }
 
     // Module worker: uses type "module" and cannot use importScripts().
-    // PhantomGrid intercepts Worker constructor and wraps with dynamic import().
+    // Duppel intercepts Worker constructor and wraps with dynamic import().
     const workerCode = `
       self.onmessage = function() {
         self.postMessage({
@@ -1197,7 +1197,7 @@
 
     // --- Synthetic MouseEvent: coordinates must be UNCHANGED ---
     // A page creating synthetic events expects exact constructor values.
-    // If PhantomGrid modifies them, it reveals the extension.
+    // If Duppel modifies them, it reveals the extension.
     const synMouse = new MouseEvent("mousemove", {
       clientX: 100, clientY: 200,
       screenX: 300, screenY: 400,

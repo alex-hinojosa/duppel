@@ -147,7 +147,7 @@ test.describe('CreepJS @external', () => {
 
     // CreepJS hash rotation is live-service dependent. CreepJS may return
     // the same hash pre/post if its computation is dominated by surfaces
-    // PhantomGrid doesn't noise, or if CreepJS caches results within the
+    // Duppel doesn't noise, or if CreepJS caches results within the
     // browser session. Record honestly: pass if changed, inconclusive if not.
     const rotationChanged = preMetrics.fingerprintHash !== postMetrics.fingerprintHash;
     if (!rotationChanged) {

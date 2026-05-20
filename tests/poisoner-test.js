@@ -1,5 +1,5 @@
 /**
- * PhantomGrid — Poisoner Invariant Tests
+ * Duppel — Poisoner Invariant Tests
  *
  * Non-network harness that stubs fetch and validates:
  * - Batch sizes per chaos level (stealth=1, balanced=1-3, chaos=5-15)

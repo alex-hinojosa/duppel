@@ -3,7 +3,7 @@
  *
  * Instruments the three candidate bypass vectors to identify which one
  * BrowserLeaks uses to extract an un-noised canvas hash despite
- * PhantomGrid's MAIN-world prototype patches:
+ * Duppel's MAIN-world prototype patches:
  *
  *   1. Worker / SharedWorker / ServiceWorker (canvas patches don't propagate)
  *   2. Saved native reference race (inline script captures toDataURL before
@@ -138,7 +138,7 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
 
     // Inject BEFORE everything — even before content scripts.
     // addInitScript runs at document creation time, before any other scripts.
-    // If BrowserLeaks' inline script captures toDataURL before PhantomGrid's
+    // If BrowserLeaks' inline script captures toDataURL before Duppel's
     // content script patches it, we'd see the captured reference match the
     // original (un-patched) version.
     await page.addInitScript(() => {
@@ -177,7 +177,7 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
         strsMatch: check.earlyRefStr === currentStr,
         earlyLooksNative: check.earlyRefStr.includes('native code'),
         currentLooksNative: currentStr.includes('native code'),
-        // If earlyRef !== currentRef, PhantomGrid patched AFTER addInitScript
+        // If earlyRef !== currentRef, Duppel patched AFTER addInitScript
         // which means content script DID run after our init script.
         // This is expected: addInitScript < content_script < page_script
         patchedAfterInit: check.earlyRef !== currentRef,
@@ -413,7 +413,7 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
     test.slow();
 
     // This test proves whether OffscreenCanvas in a Worker bypasses
-    // PhantomGrid's canvas noise. If it does, this is the mechanism
+    // Duppel's canvas noise. If it does, this is the mechanism
     // BrowserLeaks (or any fingerprinter) can use.
     const page = await context.newPage();
     await page.goto('about:blank');
@@ -577,7 +577,7 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
     // we've proven the Worker bypass mechanism
     if (r.mainNoised && r.workerResult?.success) {
       console.log(r.pixelsMatch
-        ? 'FINDING: Worker pixels MATCH main — Worker IS being noised (PhantomGrid wraps Worker constructor)'
+        ? 'FINDING: Worker pixels MATCH main — Worker IS being noised (Duppel wraps Worker constructor)'
         : 'FINDING: Worker pixels DIFFER from main — Worker canvas IS NOT noised (bypass confirmed)');
     }
   });
@@ -588,7 +588,7 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
     // BrowserLeaks source reveals:
     //   var i = _el("#canvas-iframe").contentDocument.createElement("canvas");
     // This creates a canvas through an iframe's document, using the iframe's
-    // prototype chain. If PhantomGrid doesn't inject into the iframe
+    // prototype chain. If Duppel doesn't inject into the iframe
     // (about:blank doesn't match <all_urls>), the iframe's toDataURL is
     // the real un-patched native.
 
@@ -629,7 +629,7 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
         };
       }
 
-      // === KEY TEST: Is the iframe's toDataURL patched by PhantomGrid? ===
+      // === KEY TEST: Is the iframe's toDataURL patched by Duppel? ===
 
       // Main world toDataURL
       const mainTDU = HTMLCanvasElement.prototype.toDataURL;
@@ -671,7 +671,7 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
       iframeCtx.fillStyle = 'rgba(102, 204, 0, 0.7)';
       iframeCtx.fillText('BrowserLeaks,com <canvas> 1.0', 4, 17);
 
-      // Extract via MAIN world toDataURL (should be noised by PhantomGrid)
+      // Extract via MAIN world toDataURL (should be noised by Duppel)
       const mainDataURL = mainCanvas.toDataURL('image/png');
 
       // Extract via IFRAME toDataURL (may be un-patched)
@@ -1275,7 +1275,7 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
     test.slow();
 
     // CANVAS IDENTITY CONTRACT (rowan UID 405):
-    //   PhantomGrid canvas noise is deterministic for (seed, pixel_index, pixel_value).
+    //   Duppel canvas noise is deterministic for (seed, pixel_index, pixel_value).
     //   Cross-tab equality holds when:
     //     (a) both tabs have the same canvasSeed (derived from sessionSeed), AND
     //     (b) the pre-noise pixel buffer is bit-exact across tabs.
@@ -1289,16 +1289,16 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
     //
     //   Validity requirements (rowan review of 81ef83a):
     //   - Runs on a real injected origin (local test server, not about:blank)
-    //   - Proves PhantomGrid is active (gray-fill noise detection)
+    //   - Proves Duppel is active (gray-fill noise detection)
     //   - Proves same seed across tabs (sessionStorage match)
     //   - Asserts HARD equality on noised toDataURL output
 
-    // Probe function: checks PhantomGrid is active, extracts seed, draws
+    // Probe function: checks Duppel is active, extracts seed, draws
     // geometric content, returns toDataURL for cross-tab comparison.
     // Uses putImageData to set exact known pixel values — bypasses GPU
     // rendering pipeline entirely, so any difference must come from noise.
     const probeAndDraw = `(() => {
-      // 1. PhantomGrid activity probe: gray-fill noise detection
+      // 1. Duppel activity probe: gray-fill noise detection
       const gc = document.createElement('canvas');
       gc.width = 50; gc.height = 10;
       const gctx = gc.getContext('2d');
@@ -1382,9 +1382,9 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
     console.log(`Geometric cross-tab: seeds match=${result1.seed === result2.seed}`);
     console.log(`Geometric cross-tab: TDU IDENTICAL=${result1.tdu === result2.tdu}`);
 
-    // Step 1: Assert PhantomGrid is ACTIVE on both tabs (gray-fill noise detected)
-    expect(result1.noised, 'PhantomGrid must be active on tab 1 (gray-fill noise detected)').toBe(true);
-    expect(result2.noised, 'PhantomGrid must be active on tab 2 (gray-fill noise detected)').toBe(true);
+    // Step 1: Assert Duppel is ACTIVE on both tabs (gray-fill noise detected)
+    expect(result1.noised, 'Duppel must be active on tab 1 (gray-fill noise detected)').toBe(true);
+    expect(result2.noised, 'Duppel must be active on tab 2 (gray-fill noise detected)').toBe(true);
 
     // Step 2: Assert same seed/profile across tabs
     expect(result1.seed, 'seed must be present on tab 1').not.toBeNull();
@@ -1638,7 +1638,7 @@ window.__adv_events__ = capturedEvents;
     console.log(`  suspicious props: ${JSON.stringify(result.postSuspicious)}`);
     console.log(`  canvas noised: ${result.canvasNoised}`);
 
-    // First inline script must not see any PhantomGrid convergence artifacts
+    // First inline script must not see any Duppel convergence artifacts
     expect(result.inline.pgConvergeIn, 'no __pg_converge__ property at earliest page JS').toBe(false);
     expect(result.inline.pgConvergeTypeof, 'typeof __pg_converge__ is undefined').toBe('undefined');
     expect(result.inline.pgConvergeDescriptor, 'no descriptor for __pg_converge__').toBe('null');
@@ -1647,7 +1647,7 @@ window.__adv_events__ = capturedEvents;
     expect(result.inline.suspiciousProps.length, 'no suspicious props at earliest page JS').toBe(0);
     expect(result.inline.inKeys.length, 'no suspicious keys at earliest page JS').toBe(0);
 
-    // Post-load: no PhantomGrid globals
+    // Post-load: no Duppel globals
     expect(result.postPgGlobals.length, 'no __pg* globals post-load').toBe(0);
     expect(result.postSuspicious.length, 'no suspicious props post-load').toBe(0);
 

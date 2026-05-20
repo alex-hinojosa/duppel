@@ -1,5 +1,5 @@
 /**
- * PhantomGrid — Navigator Spoofing Module
+ * Duppel — Navigator Spoofing Module
  * Navigator property spoofing, Client Hints, GPC, referrer trimming.
  */
 

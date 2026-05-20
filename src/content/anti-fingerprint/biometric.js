@@ -1,5 +1,5 @@
 /**
- * PhantomGrid — Behavioral Biometric Precision-Reduction Module
+ * Duppel — Behavioral Biometric Precision-Reduction Module
  * Event.timeStamp jitter, performance.now() quantization, MouseEvent coordinate
  * noise, WheelEvent delta quantization, Battery API spoofing.
  */

@@ -1,5 +1,5 @@
 /**
- * PhantomGrid — Profile generation (shared algorithm).
+ * Duppel — Profile generation (shared algorithm).
  * Used by background.js (via importScripts) for popup display.
  *
  * MUST stay in sync with anti-fingerprint.js UA_GROUPS and generateProfile.

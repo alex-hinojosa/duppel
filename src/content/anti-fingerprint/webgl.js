@@ -1,5 +1,5 @@
 /**
- * PhantomGrid — WebGL Fingerprint Spoofing Module
+ * Duppel — WebGL Fingerprint Spoofing Module
  * WebGL parameter spoofing, extensions, shader precision, readPixels, OffscreenCanvas noise.
  */
 

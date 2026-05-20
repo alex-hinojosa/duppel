@@ -51,7 +51,7 @@ test.describe('measureText noise', () => {
         'abcdefghijklmnopqrstuvwxyz',
         '0123456789',
         'The quick brown fox jumps over the lazy dog',
-        'PhantomGrid fingerprint defense',
+        'Duppel fingerprint defense',
       ];
 
       for (const str of testStrings) {

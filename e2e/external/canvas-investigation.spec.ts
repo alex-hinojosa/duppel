@@ -1,7 +1,7 @@
 /**
  * V3 Canvas Extraction Investigation
  *
- * Identifies which canvas extraction methods are affected by PhantomGrid's
+ * Identifies which canvas extraction methods are affected by Duppel's
  * noise and which produce stable (un-noised) output. This is the first
  * concrete test for the BrowserLeaks canvas hash gap.
  *
@@ -340,15 +340,15 @@ test.describe('Canvas Extraction Investigation @external', () => {
 
     // Key diagnostic: if OUR toDataURL changes but BrowserLeaks' hash doesn't,
     // it means BrowserLeaks is using a different extraction path or capturing
-    // the original toDataURL before PhantomGrid patches it.
+    // the original toDataURL before Duppel patches it.
     if (ourChanged && !blChanged) {
       console.warn('FINDING: Our toDataURL changes on rotation but BrowserLeaks hash does not.');
-      console.warn('This indicates BrowserLeaks captures the original toDataURL before PhantomGrid patches,');
-      console.warn('or BrowserLeaks uses an extraction method not covered by PhantomGrid.');
+      console.warn('This indicates BrowserLeaks captures the original toDataURL before Duppel patches,');
+      console.warn('or BrowserLeaks uses an extraction method not covered by Duppel.');
     }
     if (!ourChanged && !blChanged) {
       console.warn('FINDING: Neither our toDataURL nor BrowserLeaks hash changes on rotation.');
-      console.warn('This indicates PhantomGrid noise is not being applied on the BrowserLeaks origin.');
+      console.warn('This indicates Duppel noise is not being applied on the BrowserLeaks origin.');
     }
   });
 
@@ -364,7 +364,7 @@ test.describe('Canvas Extraction Investigation @external', () => {
     await page.waitForTimeout(2000);
 
     const timingResults = await page.evaluate(() => {
-      // Check if toDataURL has been patched by PhantomGrid
+      // Check if toDataURL has been patched by Duppel
       const toDataURLStr = HTMLCanvasElement.prototype.toDataURL.toString();
       const getImageDataStr = CanvasRenderingContext2D.prototype.getImageData.toString();
 
@@ -427,6 +427,6 @@ test.describe('Canvas Extraction Investigation @external', () => {
     });
 
     // Noise MUST be detected on BrowserLeaks domain
-    expect(timingResults.noiseDetected, 'PhantomGrid noise must be active on BrowserLeaks domain').toBe(true);
+    expect(timingResults.noiseDetected, 'Duppel noise must be active on BrowserLeaks domain').toBe(true);
   });
 });

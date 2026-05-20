@@ -1,5 +1,5 @@
 /**
- * PhantomGrid — Anti-Fingerprint Core Module
+ * Duppel — Anti-Fingerprint Core Module
  * Creates an immutable context object with all shared state.
  *
  * Architecture (rowan review pass 2, 2026-05-08):
@@ -27,7 +27,7 @@ export function createContext() {
   // === Disable check (synchronous, before any overrides) ===
   // Uses a cookie instead of localStorage to avoid extension-detection
   // leaks (rowan pass 3: page JS could read localStorage.__pg_off__
-  // to detect PhantomGrid). The cookie key is intentionally generic.
+  // to detect Duppel). The cookie key is intentionally generic.
   try {
     if (document.cookie.split(";").some(c => c.trim().startsWith("__pgd=1"))) return null;
   } catch(e) {}

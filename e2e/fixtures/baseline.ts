@@ -1,5 +1,5 @@
 /**
- * Baseline fixture — launches Chromium WITHOUT PhantomGrid extension.
+ * Baseline fixture — launches Chromium WITHOUT Duppel extension.
  *
  * Same structure as extension.ts but no --load-extension flags.
  * Provides vanilla Chrome behavior for comparison against extension-loaded runs.
@@ -42,7 +42,7 @@ export const test = base.extend<{
   context: async ({}, use) => {
     await ensureServer();
     const userDataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'phantomgrid-baseline-'),
+      path.join(os.tmpdir(), 'duppel-baseline-'),
     );
 
     const context = await chromium.launchPersistentContext(userDataDir, {

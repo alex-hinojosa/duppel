@@ -1,5 +1,5 @@
 /**
- * PhantomGrid — Audio Fingerprint Module
+ * Duppel — Audio Fingerprint Module
  * AudioBuffer getChannelData noise, Sensor API defense, ultrasonic attenuation.
  */
 

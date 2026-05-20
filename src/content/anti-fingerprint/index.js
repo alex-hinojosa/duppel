@@ -1,5 +1,5 @@
 /**
- * PhantomGrid — Anti-Fingerprint Entry Point
+ * Duppel — Anti-Fingerprint Entry Point
  * Imports all modules and calls install functions in order.
  * esbuild bundles this back to a single IIFE for content script injection.
  */

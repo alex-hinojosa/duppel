@@ -29,7 +29,7 @@ _stale_nested_copy/
 tmp/
 .cache/
 
-# Secrets (PhantomGrid does not currently use any, but defense in depth)
+# Secrets (Duppel does not currently use any, but defense in depth)
 .env
 .env.local
 *.pem
