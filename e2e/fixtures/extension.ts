@@ -33,6 +33,23 @@ function ensureServer(): Promise<number> {
         res.end(JSON.stringify(req.headers));
         return;
       }
+      // Serve worker test scripts with correct content-type and CORS
+      // (blob-wrapped module workers have opaque origin, need CORS for import())
+      if (req.url?.startsWith('/worker-scripts/') && req.url.endsWith('.js')) {
+        const scriptPath = path.resolve(__dirname, '.' + req.url);
+        try {
+          const content = fs.readFileSync(scriptPath, 'utf-8');
+          res.writeHead(200, {
+            'Content-Type': 'application/javascript',
+            'Access-Control-Allow-Origin': '*',
+          });
+          res.end(content);
+        } catch {
+          res.writeHead(404);
+          res.end('Not found');
+        }
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(TEST_PAGE_HTML);
     });

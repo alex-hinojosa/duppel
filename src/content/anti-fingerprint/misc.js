@@ -172,8 +172,17 @@ export function installMisc(ctx) {
   // The pixelNoise and applyCanvasNoise functions are inlined — identical
   // algorithm to canvas.js:19-41. The IIFE prevents variable leakage into
   // the worker global scope.
+  //
+  // Nested Worker protection: Workers can create sub-workers via self.Worker.
+  // Without wrapping, nested workers bypass all overrides (the native Worker
+  // constructor has no injection). The injected code includes a self.Worker
+  // wrapper that injects navigator + canvas overrides into nested workers.
+  // Depth-limited to 2 levels (Level 1 gets full overrides + wrapper,
+  // Level 2 gets overrides only, Level 3+ unprotected). Two levels covers
+  // all practical fingerprinting attack vectors.
   function buildCanvasWorkerOverrides(seed) {
-    return `
+    // Canvas-only IIFE — patches OffscreenCanvas and WebGL prototypes
+    const canvasIife = `
 ;(function(){
   var __s=${seed};
   function __pn(s,i,v){var h=s^(i*2654435761);h=(h^(v*2246822519))>>>0;h=Math.imul(h^(h>>>16),0x45d9f3b);h=Math.imul(h^(h>>>16),0x45d9f3b);h=(h^(h>>>16))>>>0;var m=(h>>>1)&3;return(h&1)?m:-m;}
@@ -187,6 +196,36 @@ export function installMisc(ctx) {
   if(typeof WebGLRenderingContext!=='undefined'){var _rp=WebGLRenderingContext.prototype.readPixels;WebGLRenderingContext.prototype.readPixels=function(x,y,w,h,f,t,p){_rp.call(this,x,y,w,h,f,t,p);if(p&&f===0x1908&&t===0x1401)__an(p,__s);};}
   if(typeof WebGL2RenderingContext!=='undefined'){var _rp2=WebGL2RenderingContext.prototype.readPixels;WebGL2RenderingContext.prototype.readPixels=function(x,y,w,h,f,t,p){_rp2.call(this,x,y,w,h,f,t,p);if(p&&f===0x1908&&t===0x1401)__an(p,__s);};}
 })();`;
+
+    // Leaf overrides = navigator + canvas (no Worker wrapper).
+    // Level 2 nested workers get these — they have full protection but
+    // can't inject further (depth limit = 2).
+    const leafOverrides = workerOverrides + canvasIife;
+
+    // Nested Worker wrapper IIFE: intercepts self.Worker inside Level 1
+    // workers to inject leafOverrides into any sub-workers they create.
+    const nestedWorkerWrapper = `
+;(function(){
+  if(typeof Worker!=='undefined'){
+    var _OW=Worker;
+    var _ovr=${JSON.stringify(leafOverrides)};
+    self.Worker=function(u,o){
+      try{
+        var ru=new URL(u,self.location.href).href;
+        if(o&&o.type==='module'){
+          var b=new Blob([_ovr+';\\nawait import('+JSON.stringify(ru)+');'],{type:'application/javascript'});
+          return new _OW(URL.createObjectURL(b),Object.assign({},o,{type:'module'}));
+        }else{
+          var b=new Blob([_ovr+';\\nimportScripts('+JSON.stringify(ru)+');'],{type:'application/javascript'});
+          return new _OW(URL.createObjectURL(b),o);
+        }
+      }catch(e){return new _OW(u,o);}
+    };
+    self.Worker.prototype=_OW.prototype;
+  }
+})();`;
+
+    return canvasIife + nestedWorkerWrapper;
   }
 
   // === Web Worker scope leak prevention ===
