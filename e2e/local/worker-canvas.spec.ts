@@ -305,12 +305,15 @@ test.describe('Worker canvas noise (OffscreenCanvas + WebGL)', () => {
     expect(result.hasNoise, result.details).toBe(true);
   });
 
-  // ── Module Worker (served URL — not Blob URL) ────────────────────
-  // Blob URL module workers fail because PhantomGrid wraps them via
-  // await import("blob:...") which isn't supported in Chromium.
-  // Served HTTP URL module workers use await import("http://...")
-  // which works correctly. This is the real-world code path — sites
-  // serve module worker scripts over HTTP, not from Blob URLs.
+  // ── Module Worker (served URL) ─────────────────────────────────────
+  // PhantomGrid's Worker constructor wraps ALL module workers into blob
+  // URL module workers internally (misc.js:206-216), regardless of whether
+  // the original URL is blob or HTTP. In Chromium for Testing (Playwright's
+  // bundled browser), blob URL module workers silently fail to execute.
+  // These tests use a served HTTP URL, but the internal wrapping still
+  // creates a blob URL module worker — so they skip in this environment.
+  // This is a pre-existing Chromium/blob-wrapper limitation, not a
+  // canvas-specific issue.
 
   test('Module Worker (served URL) getImageData is noised', async ({ extensionPage }) => {
     const result = await extensionPage.evaluate(() => {
