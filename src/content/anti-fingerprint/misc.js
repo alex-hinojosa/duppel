@@ -4,7 +4,7 @@
  */
 
 export function installMisc(ctx) {
-  const { ORIG, profile, sessionSeed, currentTzOffset, spoof, disguise, mulberry32 } = ctx;
+  const { ORIG, profile, state, spoof, disguise, mulberry32 } = ctx;
 
   // === Timezone spoofing (DST-aware) ===
   ORIG.DateTimeFormat.prototype.resolvedOptions = disguise(function() {
@@ -32,7 +32,7 @@ export function installMisc(ctx) {
   } catch(e) {}
 
   Date.prototype.getTimezoneOffset = disguise(function() {
-    return currentTzOffset;
+    return state.currentTzOffset;
   }, "getTimezoneOffset");
 
   // === WebRTC ===
@@ -125,18 +125,20 @@ export function installMisc(ctx) {
       }, 'getCapabilities', 0);
     }
 
-    // Stable device values — fresh wrapper objects created per call
-    const groupId = makeDeviceId(sessionSeed, 'group');
-    const deviceSpecs = [
-      { kind: 'audioinput',  deviceId: makeDeviceId(sessionSeed, 'audioinput'),  groupId: groupId, label: '' },
-      { kind: 'audiooutput', deviceId: makeDeviceId(sessionSeed, 'audiooutput'), groupId: groupId, label: '' },
-      { kind: 'videoinput',  deviceId: makeDeviceId(sessionSeed, 'videoinput'),  groupId: groupId, label: '' },
-    ];
-
     // Patch at prototype level (not instance) — native location.
     // Each call creates fresh device objects (distinct identity) with
     // stable values (same deviceId/groupId/kind/label).
+    // Device specs computed at call time from state.sessionSeed — ensures
+    // device IDs always reflect the current seed, not a stale primitive
+    // captured at module load time (rowan P0 R3 finding #2).
     MediaDevices.prototype.enumerateDevices = disguise(function enumerateDevices() {
+      const currentSeed = state.sessionSeed;
+      const groupId = makeDeviceId(currentSeed, 'group');
+      const deviceSpecs = [
+        { kind: 'audioinput',  deviceId: makeDeviceId(currentSeed, 'audioinput'),  groupId: groupId, label: '' },
+        { kind: 'audiooutput', deviceId: makeDeviceId(currentSeed, 'audiooutput'), groupId: groupId, label: '' },
+        { kind: 'videoinput',  deviceId: makeDeviceId(currentSeed, 'videoinput'),  groupId: groupId, label: '' },
+      ];
       const devices = deviceSpecs.map(function(spec) {
         const isInput = spec.kind === 'audioinput' || spec.kind === 'videoinput';
         const proto = isInput && IDI ? IDI.prototype : MDI.prototype;
@@ -150,8 +152,10 @@ export function installMisc(ctx) {
 
   // === Worker navigator override script ===
   // Shared by Worker, Module Worker, and SharedWorker wrappers below.
-  // Hoisted here so it's in scope for all three constructor intercepts.
-  const workerOverrides = `
+  // Built as a function (not a const string) so it reads profile.* at Worker
+  // construction time — ensures the current profile values are embedded.
+  function buildWorkerOverrides() {
+    return `
     Object.defineProperty(self.navigator.__proto__, "userAgent", { get: () => ${JSON.stringify(profile.userAgent)} });
     Object.defineProperty(self.navigator.__proto__, "platform", { get: () => ${JSON.stringify(profile.platform)} });
     Object.defineProperty(self.navigator.__proto__, "hardwareConcurrency", { get: () => ${profile.hardwareConcurrency} });
@@ -160,14 +164,14 @@ export function installMisc(ctx) {
     Object.defineProperty(self.navigator.__proto__, "languages", { get: () => Object.freeze(${JSON.stringify(profile.languages)}) });
     Object.defineProperty(self.navigator.__proto__, "appVersion", { get: () => ${JSON.stringify(profile.userAgent.replace("Mozilla/", ""))} });
   `;
+  }
 
   // === Worker canvas noise override script ===
   // Workers have their own OffscreenCanvas/WebGL prototypes — unpatched by
   // the main-world installCanvas/installWebGL. This function returns a
   // self-contained IIFE that patches OffscreenCanvas.convertToBlob,
   // OffscreenCanvasRenderingContext2D.getImageData, and WebGL readPixels
-  // inside the worker scope. Called at Worker construction time (not install
-  // time) so profile.canvasSeed is read after seed convergence.
+  // inside the worker scope. Called at Worker construction time.
   //
   // The pixelNoise and applyCanvasNoise functions are inlined — identical
   // algorithm to canvas.js:19-41. The IIFE prevents variable leakage into
@@ -195,12 +199,15 @@ export function installMisc(ctx) {
   }
   if(typeof WebGLRenderingContext!=='undefined'){var _rp=WebGLRenderingContext.prototype.readPixels;WebGLRenderingContext.prototype.readPixels=function(x,y,w,h,f,t,p){_rp.call(this,x,y,w,h,f,t,p);if(p&&f===0x1908&&t===0x1401)__an(p,__s);};}
   if(typeof WebGL2RenderingContext!=='undefined'){var _rp2=WebGL2RenderingContext.prototype.readPixels;WebGL2RenderingContext.prototype.readPixels=function(x,y,w,h,f,t,p){_rp2.call(this,x,y,w,h,f,t,p);if(p&&f===0x1908&&t===0x1401)__an(p,__s);};}
+  var __gv=${JSON.stringify(profile.gpu.vendor)},__gr=${JSON.stringify(profile.gpu.renderer)};
+  if(typeof WebGLRenderingContext!=='undefined'){var _gp=WebGLRenderingContext.prototype.getParameter;WebGLRenderingContext.prototype.getParameter=function(p){if(p===0x9245)return __gv;if(p===0x9246)return __gr;return _gp.call(this,p);};}
+  if(typeof WebGL2RenderingContext!=='undefined'){var _gp2=WebGL2RenderingContext.prototype.getParameter;WebGL2RenderingContext.prototype.getParameter=function(p){if(p===0x9245)return __gv;if(p===0x9246)return __gr;return _gp2.call(this,p);};}
 })();`;
 
     // Leaf overrides = navigator + canvas (no Worker wrapper).
     // Level 2 nested workers get these — they have full protection but
     // can't inject further (depth limit = 2).
-    const leafOverrides = workerOverrides + canvasIife;
+    const leafOverrides = buildWorkerOverrides() + canvasIife;
 
     // Nested Worker wrapper IIFE: intercepts self.Worker inside Level 1
     // workers to inject leafOverrides into any sub-workers they create.
@@ -232,14 +239,39 @@ export function installMisc(ctx) {
   // Workers run in a separate global scope with unspoofed navigator.
   // Intercept Worker constructor to inject a wrapper that overrides
   // navigator properties inside the worker.
+  //
+  // Only wrap same-origin and blob: URLs. Cross-origin workers (CDN scripts,
+  // Cloudflare Turnstile challenges, GitHub asset workers) are passed through
+  // unmodified for two reasons:
+  // 1. CSP: many sites restrict worker-src to specific origins. Wrapping a
+  //    cross-origin URL into a blob: URL violates CSPs that don't allow blob:
+  //    (GitHub), and the fallback violates CSPs that only allow blob: (Cloudflare).
+  // 2. Utility: cross-origin workers are third-party code that phones home to
+  //    its own servers — spoofing navigator inside them is pointless.
+  // Check if a URL is same-origin or blob: (safe to wrap with overrides).
+  // Cross-origin URLs are passed through unmodified to avoid CSP violations.
+  function isSameOriginOrBlob(urlStr) {
+    try {
+      if (typeof urlStr === 'string' && urlStr.startsWith('blob:')) return true;
+      var parsed = new URL(urlStr, location.href);
+      return parsed.origin === location.origin;
+    } catch(e) {
+      return false;
+    }
+  }
+
   if (typeof Worker !== "undefined") {
     const OrigWorker = Worker;
 
     window.Worker = disguise(function(url, opts) {
+      // Pass cross-origin workers through unmodified — CSP-safe, no spoofing needed.
+      if (!isSameOriginOrBlob(url)) {
+        return new OrigWorker(url, opts);
+      }
+
       const isModule = opts && opts.type === "module";
-      // Build canvas overrides at construction time — reads profile.canvasSeed
-      // AFTER convergence, not at installMisc time.
-      const allOverrides = workerOverrides + buildCanvasWorkerOverrides(profile.canvasSeed);
+      // Build overrides at construction time — reads profile.* AFTER convergence.
+      const allOverrides = buildWorkerOverrides() + buildCanvasWorkerOverrides(profile.canvasSeed);
       try {
         const origUrl = new URL(url, location.href).href;
         if (isModule) {
@@ -269,13 +301,23 @@ export function installMisc(ctx) {
     window.Worker.prototype = OrigWorker.prototype;
   }
 
+  // === ServiceWorker message interception ===
+  // Descoped from P0. The EventTarget contract (removeEventListener with
+  // listener map, handleEvent object listeners, non-mutating event.data)
+  // needs a full implementation before this can ship. Currently, SW-reported
+  // GPU data (CreepJS vector) is not spoofed. Filed as P1.
+
   // === SharedWorker scope leak prevention ===
   // SharedWorkers share a single global scope across tabs. Intercept
   // the constructor to inject navigator overrides the same way.
+  // Same cross-origin skip as Worker — CSP-safe, no spoofing needed.
   if (typeof SharedWorker !== "undefined") {
     const OrigSharedWorker = SharedWorker;
     window.SharedWorker = disguise(function(url, nameOrOpts) {
-      const allOverrides = workerOverrides + buildCanvasWorkerOverrides(profile.canvasSeed);
+      if (!isSameOriginOrBlob(url)) {
+        return new OrigSharedWorker(url, nameOrOpts);
+      }
+      const allOverrides = buildWorkerOverrides() + buildCanvasWorkerOverrides(profile.canvasSeed);
       try {
         const origUrl = new URL(url, location.href).href;
         // SharedWorkers are always classic (no module support in most browsers).
@@ -292,22 +334,25 @@ export function installMisc(ctx) {
     window.SharedWorker.prototype = OrigSharedWorker.prototype;
   }
 
-  // === NO postMessage, NO message listener ===
+  // === NO postMessage, NO message listener, NO convergence ===
   // The seed is NOT broadcast via postMessage (lux review: any tracker
   // script could listen for it and use it as a tracking identifier).
-  // Instead, bridge.js reads sessionStorage.__pg_seed__ directly — the
-  // ISOLATED world shares sessionStorage with the MAIN world.
+  // Round 6+: seed delivered via closure-local executeScript({ func, args }).
+  // Zero window properties, zero cookies for seed delivery, zero
+  // convergence events. bridge.js has no seed role (P0 fix).
   // Overrides are immutable for the lifetime of the page.
-  // Rotation = background.js clears sessionStorage seed + reloads tabs.
+  // Rotation = background.js updates STATE.tabSeeds + reloads tabs.
   // Disable = background.js sets cookie __pgd via chrome.scripting.
   //
-  // Known detection surfaces (v2):
-  // - sessionStorage.__pg_seed__ readable by same-origin page JS
+  // Known detection surfaces (v2, P0 fix):
+  // - sessionStorage.__pg_seed__ ELIMINATED (P0)
+  // - window.__pgc CustomEvent ELIMINATED (P0 round 2)
   // - document.cookie __pgd readable by page JS (JS cookies can't be httpOnly)
+  // - Cross-origin workers: unspoofed navigator (residual, documented)
   // - Classic + Module Workers: navigator spoofed via blob wrapper
   // - SharedWorker: navigator spoofed via blob wrapper
-  // - ServiceWorker: NOT covered (registered via navigator.serviceWorker.register,
-  //   runs in a separate registration scope that content scripts cannot intercept)
+  // - ServiceWorker: NOT intercepted. Cannot inject into SW scope
+  //   (no MV3 API). SW-reported GPU data remains unspoofed (P1).
   // - Worklets (AudioWorklet, PaintWorklet): NOT covered (lowest priority).
   //   AudioWorklet processors are also exempt from ultrasonic filtering
   //   (they run in a separate thread, not patchable from content script).

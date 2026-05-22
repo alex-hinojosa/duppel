@@ -1,5 +1,5 @@
-// @generated — built from src/content/anti-fingerprint/ by esbuild. DO NOT EDIT.
-(() => {
+// @generated — closure-local bootstrap for executeScript injection. DO NOT EDIT.
+function bootstrapAntiFingerprint(seed) {
   var __defProp = Object.defineProperty;
   var __getOwnPropNames = Object.getOwnPropertyNames;
   var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
@@ -11,11 +11,7 @@
   };
 
   // src/content/anti-fingerprint/core.js
-  function createContext() {
-    try {
-      if (document.cookie.split(";").some((c) => c.trim().startsWith("__pgd=1"))) return null;
-    } catch (e) {
-    }
+  function createContext(sessionSeed) {
     const ORIG = {
       toDataURL: HTMLCanvasElement.prototype.toDataURL,
       toBlob: HTMLCanvasElement.prototype.toBlob,
@@ -30,6 +26,7 @@
       getOwnPropertyDescriptors: Object.getOwnPropertyDescriptors,
       reflectGOPD: typeof Reflect !== "undefined" ? Reflect.getOwnPropertyDescriptor : null,
       promiseResolve: Promise.resolve,
+      promiseReject: Promise.reject,
       freeze: Object.freeze
     };
     if (typeof WebGLRenderingContext !== "undefined") {
@@ -60,8 +57,6 @@
     }
     const _realUA = navigator.userAgent;
     const _isFirefox = /Firefox\//.test(_realUA);
-    const _isEdge = /Edg\//.test(_realUA);
-    const _isChromium = !_isFirefox && /Chrome\//.test(_realUA);
     const UA_GROUPS = [
       {
         engine: "chromium",
@@ -179,11 +174,11 @@
       "Europe/Berlin",
       "America/Toronto"
     ];
-    function mulberry32(seed) {
+    function mulberry32(seed2) {
       return function() {
-        seed |= 0;
-        seed = seed + 1831565813 | 0;
-        let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+        seed2 |= 0;
+        seed2 = seed2 + 1831565813 | 0;
+        let t = Math.imul(seed2 ^ seed2 >>> 15, 1 | seed2);
         t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
         return ((t ^ t >>> 14) >>> 0) / 4294967296;
       };
@@ -195,8 +190,8 @@
     __name(pickFrom, "pickFrom");
     const _hostEngine = _isFirefox ? "firefox" : "chromium";
     const UA_GROUPS_FILTERED = UA_GROUPS.filter((g) => g.engine === _hostEngine);
-    function generateProfile(seed) {
-      const rng = mulberry32(seed);
+    function generateProfile(seed2) {
+      const rng = mulberry32(seed2);
       const group = pickFrom(UA_GROUPS_FILTERED.length > 0 ? UA_GROUPS_FILTERED : UA_GROUPS, rng);
       const ua = pickFrom(group.uas, rng);
       const gpu = pickFrom(group.gpus, rng);
@@ -247,40 +242,12 @@
       return fallback[tz] || 300;
     }
     __name(getTimezoneOffset, "getTimezoneOffset");
-    let sessionSeed;
-    try {
-      if (window !== window.top) {
-        try {
-          const parentSeed = window.top.sessionStorage.getItem("__pg_seed__");
-          if (parentSeed) sessionSeed = parseInt(parentSeed, 10);
-        } catch (e) {
-        }
-      }
-      if (!sessionSeed) {
-        const stored = sessionStorage.getItem("__pg_seed__");
-        if (stored) {
-          sessionSeed = parseInt(stored, 10);
-        } else {
-          sessionSeed = Date.now() ^ crypto.getRandomValues(new Uint32Array(1))[0];
-          sessionStorage.setItem("__pg_seed__", String(sessionSeed));
-        }
-      }
-    } catch (e) {
-      sessionSeed = Date.now() ^ crypto.getRandomValues(new Uint32Array(1))[0];
-    }
     const profile = generateProfile(sessionSeed);
-    const bioSeed = (profile.canvasSeed ^ 1112100685) >>> 0;
-    function convergeToSeed(correctSeed) {
-      if (correctSeed === sessionSeed) return false;
-      sessionSeed = correctSeed;
-      const newProfile = generateProfile(correctSeed);
-      for (const key of Object.keys(newProfile)) {
-        profile[key] = newProfile[key];
-      }
-      return true;
-    }
-    __name(convergeToSeed, "convergeToSeed");
-    const currentTzOffset = getTimezoneOffset(profile.timezone);
+    const state = {
+      sessionSeed,
+      bioSeed: (profile.canvasSeed ^ 1112100685) >>> 0,
+      currentTzOffset: getTimezoneOffset(profile.timezone)
+    };
     const _nativeStrings = /* @__PURE__ */ new WeakMap();
     const _spoofedProps = /* @__PURE__ */ new WeakMap();
     ORIG.defineProperty.call(Object, Function.prototype, "toString", {
@@ -378,15 +345,12 @@
     return {
       ORIG,
       profile,
-      bioSeed,
-      sessionSeed,
-      currentTzOffset,
+      state,
       spoof,
       disguise,
       mulberry32,
       _nativeStrings,
-      _spoofedProps,
-      convergeToSeed
+      _spoofedProps
     };
   }
   var init_core = __esm({
@@ -423,7 +387,43 @@
     });
     try {
       if (navigator.connection) {
-        spoof(Navigator.prototype, "connection", () => void 0);
+        var _conn = navigator.connection;
+        var frozenConn = Object.create(Object.getPrototypeOf(_conn));
+        var connProps = ["effectiveType", "downlink", "rtt", "saveData", "type"];
+        for (var i = 0; i < connProps.length; i++) {
+          var p = connProps[i];
+          if (p in _conn) {
+            var val = _conn[p];
+            ORIG.defineProperty.call(Object, frozenConn, p, {
+              get: disguise(function() {
+                return val;
+              }, "get " + p, 0),
+              enumerable: true,
+              configurable: true
+            });
+          }
+        }
+        ORIG.defineProperty.call(Object, frozenConn, "onchange", {
+          get: disguise(function() {
+            return null;
+          }, "get onchange", 0),
+          set: disguise(function() {
+          }, "set onchange", 1),
+          enumerable: true,
+          configurable: true
+        });
+        frozenConn.addEventListener = disguise(/* @__PURE__ */ __name(function addEventListener() {
+        }, "addEventListener"), "addEventListener", 2);
+        frozenConn.removeEventListener = disguise(/* @__PURE__ */ __name(function removeEventListener() {
+        }, "removeEventListener"), "removeEventListener", 2);
+        frozenConn.dispatchEvent = disguise(/* @__PURE__ */ __name(function dispatchEvent() {
+          return false;
+        }, "dispatchEvent"), "dispatchEvent", 1);
+        try {
+          ORIG.freeze.call(Object, frozenConn);
+        } catch (e) {
+        }
+        spoof(Navigator.prototype, "connection", () => frozenConn);
       }
     } catch (e) {
     }
@@ -438,30 +438,48 @@
       const uaPlatform = isMac ? "macOS" : isLinux ? "Linux" : "Windows";
       const isAppleSilicon = profile.gpu.renderer.includes("Apple M");
       const arch = isAppleSilicon ? "arm" : "x86";
-      const fakeUAData = {
+      const highEntropyResult = {
         brands,
         mobile: false,
         platform: uaPlatform,
-        toJSON() {
-          return { brands: this.brands, mobile: this.mobile, platform: this.platform };
-        },
-        getHighEntropyValues() {
-          return Promise.resolve({
-            brands,
-            mobile: false,
-            platform: uaPlatform,
-            platformVersion: isMac ? "15.5.0" : isLinux ? "6.8.0" : "15.0.0",
-            architecture: arch,
-            bitness: "64",
-            model: "",
-            uaFullVersion: `${chromeVer}.0.0.0`,
-            fullVersionList: brands.map((b) => ({ brand: b.brand, version: `${b.version}.0.0.0` })),
-            wow64: false
-          });
-        }
+        platformVersion: isMac ? "15.5.0" : isLinux ? "6.8.0" : "15.0.0",
+        architecture: arch,
+        bitness: "64",
+        model: "",
+        uaFullVersion: `${chromeVer}.0.0.0`,
+        fullVersionList: brands.map((b) => ({ brand: b.brand, version: `${b.version}.0.0.0` })),
+        wow64: false
       };
-      disguise(fakeUAData.getHighEntropyValues, "getHighEntropyValues");
-      disguise(fakeUAData.toJSON, "toJSON");
+      const uadProto = Object.create(Object.prototype);
+      Object.defineProperties(uadProto, {
+        brands: { get() {
+          return brands;
+        }, enumerable: true, configurable: true },
+        mobile: { get() {
+          return false;
+        }, enumerable: true, configurable: true },
+        platform: { get() {
+          return uaPlatform;
+        }, enumerable: true, configurable: true }
+      });
+      uadProto.toJSON = /* @__PURE__ */ __name(function toJSON() {
+        return { brands, mobile: false, platform: uaPlatform };
+      }, "toJSON");
+      uadProto.getHighEntropyValues = /* @__PURE__ */ __name(function getHighEntropyValues(hints) {
+        return Promise.resolve(highEntropyResult);
+      }, "getHighEntropyValues");
+      disguise(uadProto.getHighEntropyValues, "getHighEntropyValues");
+      disguise(uadProto.toJSON, "toJSON");
+      if (typeof NavigatorUAData !== "undefined") {
+        try {
+          Object.defineProperty(NavigatorUAData, Symbol.hasInstance, {
+            value: /* @__PURE__ */ __name((obj) => obj === fakeUAData || obj instanceof uadProto.constructor, "value"),
+            configurable: true
+          });
+        } catch (e) {
+        }
+      }
+      const fakeUAData = Object.create(uadProto);
       spoof(Navigator.prototype, "userAgentData", () => fakeUAData);
     }
     if (profile.userAgent.includes("Firefox") && !chromeMatch) {
@@ -811,8 +829,8 @@
   // src/content/anti-fingerprint/canvas.js
   function installCanvas(ctx) {
     const { ORIG, profile, disguise } = ctx;
-    function pixelNoise(seed, i, val) {
-      let h = seed ^ i * 2654435761;
+    function pixelNoise(seed2, i, val) {
+      let h = seed2 ^ i * 2654435761;
       h = (h ^ val * 2246822519) >>> 0;
       h = Math.imul(h ^ h >>> 16, 73244475);
       h = Math.imul(h ^ h >>> 16, 73244475);
@@ -821,11 +839,11 @@
       return h & 1 ? magnitude : -magnitude;
     }
     __name(pixelNoise, "pixelNoise");
-    function applyCanvasNoise(px, seed) {
+    function applyCanvasNoise(px, seed2) {
       for (let i = 0; i < px.length; i += 4) {
-        px[i] = Math.max(0, Math.min(255, px[i] + pixelNoise(seed, i, px[i])));
-        px[i + 1] = Math.max(0, Math.min(255, px[i + 1] + pixelNoise(seed, i + 1, px[i + 1])));
-        px[i + 2] = Math.max(0, Math.min(255, px[i + 2] + pixelNoise(seed, i + 2, px[i + 2])));
+        px[i] = Math.max(0, Math.min(255, px[i] + pixelNoise(seed2, i, px[i])));
+        px[i + 1] = Math.max(0, Math.min(255, px[i + 1] + pixelNoise(seed2, i + 1, px[i + 1])));
+        px[i + 2] = Math.max(0, Math.min(255, px[i + 2] + pixelNoise(seed2, i + 2, px[i + 2])));
       }
     }
     __name(applyCanvasNoise, "applyCanvasNoise");
@@ -1047,6 +1065,95 @@
     }
     __name(getCapBucket, "getCapBucket");
     const activeGlCaps = getCapBucket(profile.gpu.renderer);
+    var GL_SAFE_PASSTHROUGH = /* @__PURE__ */ new Set([
+      7936,
+      // VENDOR ("WebKit" — browser-normalized)
+      7937,
+      // RENDERER ("WebKit WebGL" — browser-normalized)
+      7938,
+      // VERSION ("WebGL 1.0 (OpenGL ES 2.0 Chromium)")
+      35724,
+      // SHADING_LANGUAGE_VERSION
+      // Current state queries (reflect app state, not hardware)
+      2884,
+      2885,
+      2886,
+      2887,
+      // CULL_FACE, CULL_FACE_MODE, FRONT_FACE, DEPTH_RANGE
+      2928,
+      2929,
+      2930,
+      2931,
+      // DITHER, BLEND_DST, BLEND_SRC, BLEND
+      2932,
+      3088,
+      3089,
+      3106,
+      // LOGIC_OP_MODE, SCISSOR_BOX, SCISSOR_TEST, COLOR_CLEAR_VALUE
+      3107,
+      2977,
+      2978,
+      3042,
+      // COLOR_WRITEMASK, VIEWPORT, DEPTH_TEST, BLEND_SRC_ALPHA
+      2898,
+      2900,
+      2902,
+      2849,
+      // LINE_SMOOTH, POLYGON_SMOOTH, DEPTH_WRITEMASK, DEPTH_FUNC
+      3413,
+      3414,
+      3415,
+      3416,
+      // RED_BITS, GREEN_BITS, BLUE_BITS, ALPHA_BITS
+      3410,
+      3411,
+      3412,
+      // SUBPIXEL_BITS, DEPTH_BITS, STENCIL_BITS
+      32773,
+      32774,
+      32777,
+      32778,
+      // BLEND_COLOR, BLEND_EQUATION, BLEND_EQUATION_RGB, BLEND_EQUATION_ALPHA
+      32968,
+      32969,
+      32970,
+      32971,
+      // BLEND_DST_RGB, BLEND_SRC_RGB, BLEND_DST_ALPHA, BLEND_SRC_ALPHA
+      34964,
+      34965,
+      // ARRAY_BUFFER_BINDING, ELEMENT_ARRAY_BUFFER_BINDING
+      35725,
+      // CURRENT_PROGRAM
+      36006,
+      36007,
+      // FRAMEBUFFER_BINDING, RENDERBUFFER_BINDING
+      2903,
+      // DEPTH_CLEAR_VALUE
+      32873,
+      34068,
+      // TEXTURE_BINDING_2D, TEXTURE_BINDING_CUBE_MAP
+      34016,
+      // ACTIVE_TEXTURE
+      33901,
+      // POLYGON_OFFSET_FACTOR (state, not capability)
+      32824,
+      // POLYGON_OFFSET_UNITS
+      32823,
+      10752,
+      // POLYGON_OFFSET_FILL, POLYGON_OFFSET_LINE (state toggles)
+      35657,
+      36347,
+      // MAX_VERTEX_UNIFORM_VECTORS duplicate, READ_FRAMEBUFFER_BINDING (WebGL2)
+      3317,
+      3333,
+      // UNPACK_ALIGNMENT, PACK_ALIGNMENT
+      33984,
+      // TEXTURE0
+      2929,
+      // BLEND_SRC_RGB (duplicate-safe in Set)
+      35887
+      // ANY_SAMPLES_PASSED (WebGL2 query)
+    ]);
     function spoofGlGetParameter(origFn) {
       return disguise(function(param) {
         if (param === 37445) return profile.gpu.vendor;
@@ -1056,7 +1163,8 @@
         if (param === 33902) return new Float32Array(activeGlCaps.lineWidthRange);
         if (param === 33888) return new Float32Array(activeGlCaps.pointSizeRange);
         if (param === 34047) return activeGlCaps.maxAnisotropy;
-        return origFn.call(this, param);
+        if (GL_SAFE_PASSTHROUGH.has(param)) return origFn.call(this, param);
+        return null;
       }, "getParameter");
     }
     __name(spoofGlGetParameter, "spoofGlGetParameter");
@@ -1066,7 +1174,7 @@
     if (ORIG.gl2GetParameter) {
       WebGL2RenderingContext.prototype.getParameter = spoofGlGetParameter(ORIG.gl2GetParameter);
     }
-    const COMMON_WEBGL_EXTENSIONS = [
+    const BASELINE_WEBGL_EXTENSIONS = [
       "ANGLE_instanced_arrays",
       "EXT_blend_minmax",
       "EXT_color_buffer_half_float",
@@ -1088,21 +1196,36 @@
       "WEBGL_draw_buffers",
       "WEBGL_lose_context"
     ];
-    const spoofedGetSupportedExtensions = disguise(function() {
-      return [...COMMON_WEBGL_EXTENSIONS];
-    }, "getSupportedExtensions");
-    if (typeof WebGLRenderingContext !== "undefined") {
-      WebGLRenderingContext.prototype.getSupportedExtensions = spoofedGetSupportedExtensions;
+    var STUBBED_EXTENSIONS = /* @__PURE__ */ new Set([
+      "WEBGL_debug_renderer_info",
+      "EXT_texture_filter_anisotropic"
+    ]);
+    var BASELINE_SET = new Set(BASELINE_WEBGL_EXTENSIONS);
+    function makeSpoofedGetSupportedExtensions(origGetSupportedFn) {
+      return disguise(function() {
+        var nativeExts = new Set(origGetSupportedFn ? origGetSupportedFn.call(this) || [] : []);
+        return BASELINE_WEBGL_EXTENSIONS.filter(function(ext) {
+          return STUBBED_EXTENSIONS.has(ext) || nativeExts.has(ext);
+        });
+      }, "getSupportedExtensions");
     }
-    if (typeof WebGL2RenderingContext !== "undefined") {
-      WebGL2RenderingContext.prototype.getSupportedExtensions = spoofedGetSupportedExtensions;
+    __name(makeSpoofedGetSupportedExtensions, "makeSpoofedGetSupportedExtensions");
+    if (typeof WebGLRenderingContext !== "undefined" && ORIG.glGetSupportedExtensions) {
+      WebGLRenderingContext.prototype.getSupportedExtensions = makeSpoofedGetSupportedExtensions(ORIG.glGetSupportedExtensions);
     }
-    const COMMON_EXT_SET = new Set(COMMON_WEBGL_EXTENSIONS);
-    function spoofGetExtension(origFn) {
+    if (typeof WebGL2RenderingContext !== "undefined" && ORIG.gl2GetSupportedExtensions) {
+      WebGL2RenderingContext.prototype.getSupportedExtensions = makeSpoofedGetSupportedExtensions(ORIG.gl2GetSupportedExtensions);
+    }
+    function spoofGetExtension(origFn, origGetSupportedFn) {
       return disguise(function(name) {
-        if (!COMMON_EXT_SET.has(name)) return null;
+        var nativeExts = new Set(origGetSupportedFn ? origGetSupportedFn.call(this) || [] : []);
+        var advertised = BASELINE_WEBGL_EXTENSIONS.filter(function(ext) {
+          return STUBBED_EXTENSIONS.has(ext) || nativeExts.has(ext);
+        });
+        var advertisedSet = new Set(advertised);
+        if (!advertisedSet.has(name)) return null;
         if (name === "WEBGL_debug_renderer_info") {
-          const real = origFn.call(this, name);
+          var real = origFn.call(this, name);
           if (real) return real;
           return {
             UNMASKED_VENDOR_WEBGL: 37445,
@@ -1110,7 +1233,7 @@
           };
         }
         if (name === "EXT_texture_filter_anisotropic") {
-          const real = origFn.call(this, name);
+          var real = origFn.call(this, name);
           if (real) return real;
           return {
             TEXTURE_MAX_ANISOTROPY_EXT: 34046,
@@ -1122,18 +1245,27 @@
     }
     __name(spoofGetExtension, "spoofGetExtension");
     if (ORIG.glGetExtension) {
-      WebGLRenderingContext.prototype.getExtension = spoofGetExtension(ORIG.glGetExtension);
+      WebGLRenderingContext.prototype.getExtension = spoofGetExtension(ORIG.glGetExtension, ORIG.glGetSupportedExtensions);
     }
     if (ORIG.gl2GetExtension) {
-      WebGL2RenderingContext.prototype.getExtension = spoofGetExtension(ORIG.gl2GetExtension);
+      WebGL2RenderingContext.prototype.getExtension = spoofGetExtension(ORIG.gl2GetExtension, ORIG.gl2GetSupportedExtensions);
     }
+    var PRECISION_TIERS = {};
+    PRECISION_TIERS[36336] = { rangeMin: 1, rangeMax: 1, precision: 8 };
+    PRECISION_TIERS[36337] = { rangeMin: 14, rangeMax: 14, precision: 10 };
+    PRECISION_TIERS[36338] = { rangeMin: 127, rangeMax: 127, precision: 23 };
+    PRECISION_TIERS[36339] = { rangeMin: 8, rangeMax: 8, precision: 0 };
+    PRECISION_TIERS[36340] = { rangeMin: 16, rangeMax: 16, precision: 0 };
+    PRECISION_TIERS[36341] = { rangeMin: 24, rangeMax: 24, precision: 0 };
     function spoofGetShaderPrecisionFormat(origFn) {
       return disguise(function(shaderType, precisionType) {
         const real = origFn.call(this, shaderType, precisionType);
         if (!real) return real;
-        ORIG.defineProperty.call(Object, real, "rangeMin", { value: 127, writable: false, enumerable: true, configurable: false });
-        ORIG.defineProperty.call(Object, real, "rangeMax", { value: 127, writable: false, enumerable: true, configurable: false });
-        ORIG.defineProperty.call(Object, real, "precision", { value: 23, writable: false, enumerable: true, configurable: false });
+        var tier = PRECISION_TIERS[precisionType];
+        if (!tier) tier = PRECISION_TIERS[36338];
+        ORIG.defineProperty.call(Object, real, "rangeMin", { value: tier.rangeMin, writable: false, enumerable: true, configurable: false });
+        ORIG.defineProperty.call(Object, real, "rangeMax", { value: tier.rangeMax, writable: false, enumerable: true, configurable: false });
+        ORIG.defineProperty.call(Object, real, "precision", { value: tier.precision, writable: false, enumerable: true, configurable: false });
         return real;
       }, "getShaderPrecisionFormat");
     }
@@ -1207,9 +1339,9 @@
         }
         if (noised.has(channel)) return data;
         noised.add(channel);
-        const seed = profile.audioSeed ^ channel * 2654435769;
+        const seed2 = profile.audioSeed ^ channel * 2654435769;
         for (let i = 0; i < data.length; i++) {
-          let h = seed ^ i * 2654435761;
+          let h = seed2 ^ i * 2654435761;
           h = Math.imul(h ^ data[i] * 1e6 >>> 0, 73244475);
           h = (h ^ h >>> 16) >>> 0;
           data[i] += (h % 200 - 100) * 5e-7;
@@ -1275,17 +1407,17 @@
 
   // src/content/anti-fingerprint/biometric.js
   function installBiometric(ctx) {
-    const { ORIG, profile, bioSeed, spoof, disguise } = ctx;
+    const { ORIG, profile, state, spoof, disguise } = ctx;
     const BIO_SALT_TIMESTAMP = 1414090053;
     const BIO_SALT_PERFNOW = 1346720326;
     const BIO_SALT_MOUSE_X = 1297635416;
     const BIO_SALT_MOUSE_Y = 1297701209;
-    function bioGaussian(seed, salt, inputHash, sigma, bound) {
-      let h1 = seed ^ salt ^ inputHash;
+    function bioGaussian(seed2, salt, inputHash, sigma, bound) {
+      let h1 = seed2 ^ salt ^ inputHash;
       h1 = Math.imul(h1 ^ h1 >>> 16, 73244475);
       h1 = Math.imul(h1 ^ h1 >>> 16, 73244475);
       h1 = (h1 ^ h1 >>> 16) >>> 0;
-      let h2 = seed ^ Math.imul(salt, 2654435769) ^ inputHash;
+      let h2 = seed2 ^ Math.imul(salt, 2654435769) ^ inputHash;
       h2 = Math.imul(h2 ^ h2 >>> 16, 73244475);
       h2 = Math.imul(h2 ^ h2 >>> 16, 73244475);
       h2 = (h2 ^ h2 >>> 16) >>> 0;
@@ -1320,7 +1452,7 @@
           _tsCache.set(this, real);
           return real;
         }
-        const jitter = bioGaussian(bioSeed, BIO_SALT_TIMESTAMP, real * 1e3 >>> 0, 0.5, 1);
+        const jitter = bioGaussian(state.bioSeed, BIO_SALT_TIMESTAMP, real * 1e3 >>> 0, 0.5, 1);
         const result = real + jitter;
         _tsCache.set(this, result);
         return result;
@@ -1331,7 +1463,7 @@
     Performance.prototype.now = disguise(function() {
       const real = _origPerfNow.call(this);
       const quantized = Math.round(real * 10) / 10;
-      const jitter = bioGaussian(bioSeed, BIO_SALT_PERFNOW, quantized * 1e4 >>> 0, 0.03, 0.1);
+      const jitter = bioGaussian(state.bioSeed, BIO_SALT_PERFNOW, quantized * 1e4 >>> 0, 0.03, 0.1);
       const result = quantized + jitter;
       if (result < _perfLast) return _perfLast;
       _perfLast = result;
@@ -1369,8 +1501,8 @@
         }
         const rx = _origCoordGetters.clientX ? _origCoordGetters.clientX.call(event) : 0;
         const ry = _origCoordGetters.clientY ? _origCoordGetters.clientY.call(event) : 0;
-        const gx = bioGaussian(bioSeed, BIO_SALT_MOUSE_X, rx | 0, 0.4, 1);
-        const gy = bioGaussian(bioSeed, BIO_SALT_MOUSE_Y, ry | 0, 0.4, 1);
+        const gx = bioGaussian(state.bioSeed, BIO_SALT_MOUSE_X, rx | 0, 0.4, 1);
+        const gy = bioGaussian(state.bioSeed, BIO_SALT_MOUSE_Y, ry | 0, 0.4, 1);
         cached = { nx: Math.round(gx), ny: Math.round(gy) };
         _mouseCache.set(event, cached);
         return cached;
@@ -1440,7 +1572,7 @@
 
   // src/content/anti-fingerprint/misc.js
   function installMisc(ctx) {
-    const { ORIG, profile, sessionSeed, currentTzOffset, spoof, disguise, mulberry32 } = ctx;
+    const { ORIG, profile, state, spoof, disguise, mulberry32 } = ctx;
     ORIG.DateTimeFormat.prototype.resolvedOptions = disguise(function() {
       const opts = ORIG.resolvedOptions.call(this);
       opts.timeZone = profile.timezone;
@@ -1473,11 +1605,11 @@
     } catch (e) {
     }
     Date.prototype.getTimezoneOffset = disguise(function() {
-      return currentTzOffset;
+      return state.currentTzOffset;
     }, "getTimezoneOffset");
     if (typeof navigator !== "undefined" && navigator.mediaDevices && typeof MediaDevices !== "undefined" && typeof MediaDevices.prototype.enumerateDevices === "function" && typeof MediaDeviceInfo !== "undefined") {
-      let makeDeviceId = function(seed, kind) {
-        const rng = mulberry32(seed ^ hashStr(kind));
+      let makeDeviceId = function(seed2, kind) {
+        const rng = mulberry32(seed2 ^ hashStr(kind));
         let hex = "";
         for (let i = 0; i < 16; i++) {
           hex += (rng() * 4294967295 >>> 0).toString(16).padStart(8, "0");
@@ -1530,13 +1662,14 @@
           return {};
         }, "getCapabilities"), "getCapabilities", 0);
       }
-      const groupId = makeDeviceId(sessionSeed, "group");
-      const deviceSpecs = [
-        { kind: "audioinput", deviceId: makeDeviceId(sessionSeed, "audioinput"), groupId, label: "" },
-        { kind: "audiooutput", deviceId: makeDeviceId(sessionSeed, "audiooutput"), groupId, label: "" },
-        { kind: "videoinput", deviceId: makeDeviceId(sessionSeed, "videoinput"), groupId, label: "" }
-      ];
       MediaDevices.prototype.enumerateDevices = disguise(/* @__PURE__ */ __name(function enumerateDevices() {
+        const currentSeed = state.sessionSeed;
+        const groupId = makeDeviceId(currentSeed, "group");
+        const deviceSpecs = [
+          { kind: "audioinput", deviceId: makeDeviceId(currentSeed, "audioinput"), groupId, label: "" },
+          { kind: "audiooutput", deviceId: makeDeviceId(currentSeed, "audiooutput"), groupId, label: "" },
+          { kind: "videoinput", deviceId: makeDeviceId(currentSeed, "videoinput"), groupId, label: "" }
+        ];
         const devices = deviceSpecs.map(function(spec) {
           const isInput = spec.kind === "audioinput" || spec.kind === "videoinput";
           const proto = isInput && IDI ? IDI.prototype : MDI.prototype;
@@ -1547,7 +1680,8 @@
         return ORIG.promiseResolve.call(Promise, devices);
       }, "enumerateDevices"), "enumerateDevices", 0);
     }
-    const workerOverrides = `
+    function buildWorkerOverrides() {
+      return `
     Object.defineProperty(self.navigator.__proto__, "userAgent", { get: () => ${JSON.stringify(profile.userAgent)} });
     Object.defineProperty(self.navigator.__proto__, "platform", { get: () => ${JSON.stringify(profile.platform)} });
     Object.defineProperty(self.navigator.__proto__, "hardwareConcurrency", { get: () => ${profile.hardwareConcurrency} });
@@ -1556,10 +1690,12 @@
     Object.defineProperty(self.navigator.__proto__, "languages", { get: () => Object.freeze(${JSON.stringify(profile.languages)}) });
     Object.defineProperty(self.navigator.__proto__, "appVersion", { get: () => ${JSON.stringify(profile.userAgent.replace("Mozilla/", ""))} });
   `;
-    function buildCanvasWorkerOverrides(seed) {
+    }
+    __name(buildWorkerOverrides, "buildWorkerOverrides");
+    function buildCanvasWorkerOverrides(seed2) {
       const canvasIife = `
 ;(function(){
-  var __s=${seed};
+  var __s=${seed2};
   function __pn(s,i,v){var h=s^(i*2654435761);h=(h^(v*2246822519))>>>0;h=Math.imul(h^(h>>>16),0x45d9f3b);h=Math.imul(h^(h>>>16),0x45d9f3b);h=(h^(h>>>16))>>>0;var m=(h>>>1)&3;return(h&1)?m:-m;}
   function __an(px,s){for(var i=0;i<px.length;i+=4){px[i]=Math.max(0,Math.min(255,px[i]+__pn(s,i,px[i])));px[i+1]=Math.max(0,Math.min(255,px[i+1]+__pn(s,i+1,px[i+1])));px[i+2]=Math.max(0,Math.min(255,px[i+2]+__pn(s,i+2,px[i+2])));}}
   if(typeof OffscreenCanvas!=='undefined'){
@@ -1570,8 +1706,11 @@
   }
   if(typeof WebGLRenderingContext!=='undefined'){var _rp=WebGLRenderingContext.prototype.readPixels;WebGLRenderingContext.prototype.readPixels=function(x,y,w,h,f,t,p){_rp.call(this,x,y,w,h,f,t,p);if(p&&f===0x1908&&t===0x1401)__an(p,__s);};}
   if(typeof WebGL2RenderingContext!=='undefined'){var _rp2=WebGL2RenderingContext.prototype.readPixels;WebGL2RenderingContext.prototype.readPixels=function(x,y,w,h,f,t,p){_rp2.call(this,x,y,w,h,f,t,p);if(p&&f===0x1908&&t===0x1401)__an(p,__s);};}
+  var __gv=${JSON.stringify(profile.gpu.vendor)},__gr=${JSON.stringify(profile.gpu.renderer)};
+  if(typeof WebGLRenderingContext!=='undefined'){var _gp=WebGLRenderingContext.prototype.getParameter;WebGLRenderingContext.prototype.getParameter=function(p){if(p===0x9245)return __gv;if(p===0x9246)return __gr;return _gp.call(this,p);};}
+  if(typeof WebGL2RenderingContext!=='undefined'){var _gp2=WebGL2RenderingContext.prototype.getParameter;WebGL2RenderingContext.prototype.getParameter=function(p){if(p===0x9245)return __gv;if(p===0x9246)return __gr;return _gp2.call(this,p);};}
 })();`;
-      const leafOverrides = workerOverrides + canvasIife;
+      const leafOverrides = buildWorkerOverrides() + canvasIife;
       const nestedWorkerWrapper = `
 ;(function(){
   if(typeof Worker!=='undefined'){
@@ -1595,11 +1734,24 @@
       return canvasIife + nestedWorkerWrapper;
     }
     __name(buildCanvasWorkerOverrides, "buildCanvasWorkerOverrides");
+    function isSameOriginOrBlob(urlStr) {
+      try {
+        if (typeof urlStr === "string" && urlStr.startsWith("blob:")) return true;
+        var parsed = new URL(urlStr, location.href);
+        return parsed.origin === location.origin;
+      } catch (e) {
+        return false;
+      }
+    }
+    __name(isSameOriginOrBlob, "isSameOriginOrBlob");
     if (typeof Worker !== "undefined") {
       const OrigWorker = Worker;
       window.Worker = disguise(function(url, opts) {
+        if (!isSameOriginOrBlob(url)) {
+          return new OrigWorker(url, opts);
+        }
         const isModule = opts && opts.type === "module";
-        const allOverrides = workerOverrides + buildCanvasWorkerOverrides(profile.canvasSeed);
+        const allOverrides = buildWorkerOverrides() + buildCanvasWorkerOverrides(profile.canvasSeed);
         try {
           const origUrl = new URL(url, location.href).href;
           if (isModule) {
@@ -1626,7 +1778,10 @@ importScripts(${JSON.stringify(origUrl)});`],
     if (typeof SharedWorker !== "undefined") {
       const OrigSharedWorker = SharedWorker;
       window.SharedWorker = disguise(function(url, nameOrOpts) {
-        const allOverrides = workerOverrides + buildCanvasWorkerOverrides(profile.canvasSeed);
+        if (!isSameOriginOrBlob(url)) {
+          return new OrigSharedWorker(url, nameOrOpts);
+        }
+        const allOverrides = buildWorkerOverrides() + buildCanvasWorkerOverrides(profile.canvasSeed);
         try {
           const origUrl = new URL(url, location.href).href;
           const blob = new Blob(
@@ -1817,9 +1972,9 @@ importScripts(${JSON.stringify(origUrl)});`],
     }
   });
 
-  // src/content/anti-fingerprint/index.js
-  var require_index = __commonJS({
-    "src/content/anti-fingerprint/index.js"() {
+  // src/content/anti-fingerprint/bootstrap-entry.js
+  var require_bootstrap_entry = __commonJS({
+    "src/content/anti-fingerprint/bootstrap-entry.js"() {
       init_core();
       init_navigator();
       init_screen();
@@ -1831,35 +1986,49 @@ importScripts(${JSON.stringify(origUrl)});`],
       init_iframe();
       (function() {
         "use strict";
-        const ctx = createContext();
-        if (!ctx) return;
-        const _onConverge = /* @__PURE__ */ __name(function(e) {
-          ctx.convergeToSeed(e.detail);
-          window.removeEventListener("__pgc", _onConverge);
-        }, "_onConverge");
         try {
-          window.addEventListener("__pgc", _onConverge);
+          if (document.cookie.split(";").some(function(c) {
+            return c.trim().startsWith("__pgd=1");
+          })) return;
         } catch (e) {
         }
-        installNavigator(ctx);
-        installScreen(ctx);
-        installCanvas(ctx);
-        installWebGL(ctx);
-        installAudio(ctx);
-        installBiometric(ctx);
-        installMisc(ctx);
-        installIframe(ctx);
+        if (typeof seed !== "number") return;
+        var ctx = createContext(seed);
+        if (!ctx) return;
         try {
-          setTimeout(function() {
-            try {
-              window.removeEventListener("__pgc", _onConverge);
-            } catch (e) {
-            }
-          }, 200);
+          installNavigator(ctx);
+        } catch (e) {
+        }
+        try {
+          installScreen(ctx);
+        } catch (e) {
+        }
+        try {
+          installCanvas(ctx);
+        } catch (e) {
+        }
+        try {
+          installWebGL(ctx);
+        } catch (e) {
+        }
+        try {
+          installAudio(ctx);
+        } catch (e) {
+        }
+        try {
+          installBiometric(ctx);
+        } catch (e) {
+        }
+        try {
+          installMisc(ctx);
+        } catch (e) {
+        }
+        try {
+          installIframe(ctx);
         } catch (e) {
         }
       })();
     }
   });
-  require_index();
-})();
+  require_bootstrap_entry();
+}

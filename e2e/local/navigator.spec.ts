@@ -42,9 +42,24 @@ test.describe('Navigator spoofing', () => {
     expect(nav.maxTouchPoints).toBe(0);
   });
 
-  test('connection is undefined (removed)', async ({ extensionPage }) => {
-    const nav = await collectNavigator(extensionPage);
-    expect(nav.connection).toBeUndefined();
+  test('connection is a frozen NetworkInformation clone', async ({ extensionPage }) => {
+    const result = await extensionPage.evaluate(() => {
+      const conn = navigator.connection;
+      if (!conn) return { exists: false };
+      return {
+        exists: true,
+        hasEffectiveType: 'effectiveType' in conn,
+        onchangeIsNull: conn.onchange === null,
+        // addEventListener should be a no-op (returns undefined)
+        addEventListenerNoOp: typeof conn.addEventListener === 'function',
+      };
+    });
+    // Chromium always has navigator.connection — returning undefined is a bot signal.
+    // Duppel returns a frozen clone with event handlers disabled.
+    expect(result.exists).toBe(true);
+    expect(result.hasEffectiveType).toBe(true);
+    expect(result.onchangeIsNull).toBe(true);
+    expect(result.addEventListenerNoOp).toBe(true);
   });
 
   test('languages is frozen array, first matches language', async ({ extensionPage }) => {

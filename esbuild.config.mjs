@@ -4,19 +4,45 @@ import path from 'path';
 
 const target = process.argv[2] || 'content';
 
-// === Step 1: Always build anti-fingerprint.js (shared content script) ===
-await esbuild.build({
-  entryPoints: ['src/content/anti-fingerprint/index.js'],
+// === Step 1: Build anti-fingerprint-bootstrap.js (closure-local function for executeScript) ===
+// Round 6: the entire anti-fingerprint bundle becomes a named function
+// `bootstrapAntiFingerprint(seed)` that background.js passes to
+// chrome.scripting.executeScript({ func, args }). No manifest content script.
+const result = await esbuild.build({
+  entryPoints: ['src/content/anti-fingerprint/bootstrap-entry.js'],
   bundle: true,
-  outfile: 'anti-fingerprint.js',
+  write: false,
   format: 'iife',
   minify: false,
   keepNames: true,
   sourcemap: false,
   target: 'chrome120',
   legalComments: 'inline',
-  banner: { js: '// @generated — built from src/content/anti-fingerprint/ by esbuild. DO NOT EDIT.' },
 });
+
+// Post-build: strip the esbuild IIFE wrapper, wrap in a named function definition.
+// esbuild produces `(() => { ... })();` — we need `function bootstrapAntiFingerprint(seed) { ... }`.
+// The `seed` parameter becomes a closure-local variable visible to all bundled code.
+//
+// The entry point uses an inner IIFE `(function() { ... })();` to allow `return`
+// statements. We keep that inner IIFE intact — it becomes the body of
+// bootstrapAntiFingerprint. The `seed` variable is visible inside it via closure
+// over the outer function's parameter.
+let bootstrapCode = result.outputFiles[0].text;
+
+// Strip esbuild's outer IIFE wrapper. Handle both arrow-function and function forms.
+// esbuild output: `(() => {\n  ...code...\n})();\n`
+bootstrapCode = bootstrapCode
+  .replace(/^\(\(\) => \{\n?/, '')          // strip `(() => {\n`
+  .replace(/\n?\}\)\(\);\n?$/, '');         // strip `\n})();\n`
+
+const wrappedBootstrap =
+  '// @generated — closure-local bootstrap for executeScript injection. DO NOT EDIT.\n' +
+  'function bootstrapAntiFingerprint(seed) {\n' +
+  bootstrapCode + '\n' +
+  '}\n';
+
+fs.writeFileSync('anti-fingerprint-bootstrap.js', wrappedBootstrap);
 
 if (target === 'content') process.exit(0);
 
@@ -39,7 +65,7 @@ function copyDir(src, dest) {
 
 // Shared files for both platforms
 const SHARED = [
-  'anti-fingerprint.js',
+  'anti-fingerprint-bootstrap.js',
   'bridge.js',
   'profiles.js',
   'poisoner.js',
@@ -63,24 +89,7 @@ function buildChrome() {
   console.log(`Chrome build → ${out}/`);
 }
 
-function buildFirefox() {
-  const out = 'build/firefox';
-  fs.rmSync(out, { recursive: true, force: true });
-  fs.mkdirSync(out, { recursive: true });
-
-  // Shared files
-  for (const f of SHARED) copyFile(f, path.join(out, f));
-
-  // Firefox-specific
-  copyFile('manifest.firefox.json', path.join(out, 'manifest.json'));
-  copyFile('background.firefox.js', path.join(out, 'background.firefox.js'));
-  copyFile('web-request-rules.js', path.join(out, 'web-request-rules.js'));
-  copyDir('popup', path.join(out, 'popup'));
-  copyDir('icons', path.join(out, 'icons'));
-  // No rules/ directory — webRequest handles it
-
-  console.log(`Firefox build → ${out}/`);
-}
+// Firefox de-scoped from v0.1.0 (Round 9). Files quarantined as .v02.
+// Re-enable for v0.2.0 after Firefox seed architecture is unified with Chrome.
 
 if (target === 'chrome' || target === 'all') buildChrome();
-if (target === 'firefox' || target === 'all') buildFirefox();

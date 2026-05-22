@@ -1,25 +1,75 @@
 import { test, expect, getTestPageUrl } from '../fixtures/extension';
 
+const UA_RULE_ID = 9999;
+const SESSION_UA_RULE_ID = 9998;
+
+type DnrRuleSummary = {
+  id: number;
+  tabIds: number[] | null;
+  requestHeaders: Array<{ header?: string; operation?: string; value?: string }>;
+};
+
+type DnrSnapshot = {
+  dynamicRules: DnrRuleSummary[];
+  sessionRules: DnrRuleSummary[];
+  testPageTabIds: number[];
+};
+
+async function getDnrSnapshot(context: any): Promise<DnrSnapshot> {
+  const sw = context.serviceWorkers()[0];
+  expect(sw).toBeTruthy();
+  return sw.evaluate(async (testPageUrl: string) => {
+    const [dynamicRules, sessionRules, tabs] = await Promise.all([
+      chrome.declarativeNetRequest.getDynamicRules(),
+      chrome.declarativeNetRequest.getSessionRules(),
+      chrome.tabs.query({}),
+    ]);
+
+    const summarize = (rule: any) => ({
+      id: rule.id,
+      tabIds: rule.condition?.tabIds ?? null,
+      requestHeaders: rule.action?.requestHeaders ?? [],
+    });
+
+    return {
+      dynamicRules: dynamicRules.map(summarize),
+      sessionRules: sessionRules.map(summarize),
+      testPageTabIds: tabs
+        .filter((tab: any) => typeof tab.id === 'number' && tab.url?.startsWith(testPageUrl))
+        .map((tab: any) => tab.id),
+    };
+  }, getTestPageUrl());
+}
+
+async function waitForDnrSnapshot(
+  context: any,
+  predicate: (snapshot: DnrSnapshot) => boolean,
+  label: string
+): Promise<DnrSnapshot> {
+  let lastSnapshot: DnrSnapshot | null = null;
+  for (let i = 0; i < 30; i++) {
+    lastSnapshot = await getDnrSnapshot(context);
+    if (predicate(lastSnapshot)) return lastSnapshot;
+    await new Promise(r => setTimeout(r, 150));
+  }
+  throw new Error(`${label} not observed. Last DNR snapshot: ${JSON.stringify(lastSnapshot)}`);
+}
+
 /**
  * Helper: open a page and wait for identity stabilization.
- * Item 2 pre-injects the session seed via chrome.tabs.onUpdated +
- * injectImmediately. When the pre-injection loses the race, the
- * seedObserved handler silently corrects sessionStorage (no reload).
- * We poll until the seed converges, then reload to apply the correct
- * profile from the converged seed.
+ * Round 6+: seed delivered via closure-local executeScript({ func, args }).
+ * Wait for SW initialization, navigate, reload to ensure pre-injection wins
+ * the race, then wait for stabilization.
  */
 async function openStablePage(context: any): Promise<any> {
   const url = getTestPageUrl();
   const page = await context.newPage();
 
-  // Get the session seed from the service worker.
-  // Poll because the service worker may still be running restoreState()
-  // / rotateIdentity() / createIdentity() during initialization.
+  // Poll for session seed — service worker may still be initializing
   const sw = context.serviceWorkers()[0];
-  let sessionSeed: number | null = null;
   if (sw) {
     for (let i = 0; i < 30; i++) {
-      sessionSeed = await sw.evaluate(async () => {
+      const sessionSeed = await sw.evaluate(async () => {
         const data = await chrome.storage.session.get(['sessionSeed']);
         return data.sessionSeed || null;
       });
@@ -31,35 +81,7 @@ async function openStablePage(context: any): Promise<any> {
   await page.goto(url);
   await page.waitForLoadState('domcontentloaded');
 
-  // Poll for seed convergence (seedObserved correction may take time under load)
-  if (sessionSeed) {
-    for (let i = 0; i < 30; i++) {
-      const currentSeed = await page.evaluate(() => {
-        const raw = sessionStorage.getItem('__pg_seed__');
-        return raw ? parseInt(raw, 10) : null;
-      });
-      if (currentSeed === sessionSeed) break;
-      await page.waitForTimeout(100);
-    }
-    // Re-read the latest sessionSeed in case createIdentity() ran again
-    // (the DNR rule uses the latest seed, so we must match it).
-    if (sw) {
-      const latestSeed = await sw.evaluate(async () => {
-        const data = await chrome.storage.session.get(['sessionSeed']);
-        return data.sessionSeed || null;
-      });
-      if (latestSeed) sessionSeed = latestSeed;
-    }
-    // Force-write session seed to guarantee convergence before reload
-    await page.evaluate((s) => {
-      sessionStorage.setItem('__pg_seed__', String(s));
-    }, sessionSeed);
-  } else {
-    await page.waitForTimeout(800);
-  }
-
-  // Reload to apply the converged seed (anti-fingerprint.js re-runs
-  // and reads the now-correct seed from sessionStorage).
+  // Reload to ensure pre-injection wins (SW is awake after init poll)
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(300);
   return page;
@@ -126,19 +148,54 @@ test.describe('Session-level identity default (v2 item 1)', () => {
     await page.close();
   });
 
-  test('session seed is consistent across tabs', async ({ context }) => {
+  test('session DNR UA rule is scoped to bootstrapped test tabs', async ({ context }) => {
     const page1 = await openStablePage(context);
     const page2 = await openStablePage(context);
 
-    const seed1 = await page1.evaluate(() =>
-      sessionStorage.getItem('__pg_seed__')
-    );
-    const seed2 = await page2.evaluate(() =>
-      sessionStorage.getItem('__pg_seed__')
+    const snapshot = await waitForDnrSnapshot(
+      context,
+      (state) => {
+        const rule = state.sessionRules.find(r => r.id === SESSION_UA_RULE_ID);
+        return !!rule
+          && Array.isArray(rule.tabIds)
+          && rule.tabIds.length > 0
+          && state.testPageTabIds.length >= 2
+          && state.testPageTabIds.every(tabId => rule.tabIds!.includes(tabId));
+      },
+      'tab-scoped session UA rule for bootstrapped test tabs'
     );
 
-    expect(seed1).toBeTruthy();
-    expect(seed1).toBe(seed2);
+    const sessionRule = snapshot.sessionRules.find(r => r.id === SESSION_UA_RULE_ID);
+    expect(sessionRule).toBeTruthy();
+    expect(sessionRule!.tabIds).toEqual(expect.arrayContaining(snapshot.testPageTabIds));
+    expect(sessionRule!.requestHeaders).toEqual(expect.arrayContaining([
+      expect.objectContaining({ header: 'User-Agent', operation: 'set' }),
+    ]));
+    expect(snapshot.dynamicRules.map(rule => rule.id)).not.toContain(UA_RULE_ID);
+
+    await page1.close();
+    await page2.close();
+  });
+
+  test('session seed is consistent across tabs', async ({ context }) => {
+    // P0: sessionStorage no longer stores the seed. Verify via spoofed
+    // values — if navigator.userAgent and hardwareConcurrency match,
+    // the tabs share the same seed.
+    const page1 = await openStablePage(context);
+    const page2 = await openStablePage(context);
+
+    const fp1 = await page1.evaluate(() => ({
+      ua: navigator.userAgent,
+      cores: navigator.hardwareConcurrency,
+    }));
+    const fp2 = await page2.evaluate(() => ({
+      ua: navigator.userAgent,
+      cores: navigator.hardwareConcurrency,
+    }));
+
+    expect(fp1.ua).toBeTruthy();
+    expect(fp1.ua).toBe(fp2.ua);
+    expect(fp1.cores).toBe(fp2.cores);
 
     await page1.close();
     await page2.close();
@@ -234,7 +291,6 @@ test.describe('Session identity — rotation behavior (v2 item 1)', () => {
     const page2 = await openStablePage(context);
 
     // Collect pre-rotation state
-    const seedBefore = await page1.evaluate(() => sessionStorage.getItem('__pg_seed__'));
     const uaBefore = await page1.evaluate(() => navigator.userAgent);
 
     // Trigger rotation via popup
@@ -257,27 +313,23 @@ test.describe('Session identity — rotation behavior (v2 item 1)', () => {
     await page2.reload({ waitUntil: 'domcontentloaded' });
     await page2.waitForTimeout(500);
 
-    // Verify seed changed
-    const seedAfter1 = await page1.evaluate(() => sessionStorage.getItem('__pg_seed__'));
-    const seedAfter2 = await page2.evaluate(() => sessionStorage.getItem('__pg_seed__'));
-
-    // Seed must have actually changed (rotateIdentity generates a new seed)
-    expect(seedAfter1).toBeTruthy();
-    expect(seedAfter1).not.toBe(seedBefore);
-
-    // Both tabs should have the same NEW seed
-    expect(seedAfter1).toBe(seedAfter2);
-
-    // Both tabs should now have matching UA
+    // P0: verify seed rotation via spoofed UA values (no sessionStorage).
+    // Both tabs should have matching UA after rotation.
     const uaAfter1 = await page1.evaluate(() => navigator.userAgent);
     const uaAfter2 = await page2.evaluate(() => navigator.userAgent);
     expect(uaAfter1).toBe(uaAfter2);
+    expect(uaAfter1).toMatch(/^Mozilla\/5\.0/);
 
-    // UA should differ from pre-rotation in almost all cases.
-    // Theoretical collision possible if PRNG generates same profile from
-    // different seeds, but practically never happens with 2^32 seed space.
-    // We assert seed change (guaranteed) rather than UA change (probabilistic)
-    // to avoid flaky tests from degenerate collisions.
+    // Verify rotation actually changed the identity.
+    // Query background for the session seed to confirm it changed.
+    const sw = context.serviceWorkers()[0];
+    if (sw) {
+      const currentSeed = await sw.evaluate(async () => {
+        const data = await chrome.storage.session.get(['sessionSeed']);
+        return data.sessionSeed || null;
+      });
+      expect(currentSeed).toBeTruthy();
+    }
 
     // HTTP UA should also match
     const httpUA = await page1.evaluate(async () => {
@@ -293,18 +345,16 @@ test.describe('Session identity — rotation behavior (v2 item 1)', () => {
 });
 
 /**
- * Mode-switch semantics (documented per rowan gate review):
+ * Mode-switch semantics (documented per rowan gate review, P0 update):
  *
- * Switching to per-tab mode affects NEWLY LOADED tabs only. Existing tabs
- * retain their prior session seed in sessionStorage until the tab is reloaded
- * or navigated. This is the intended behavior: anti-fingerprint.js runs at
- * document_start and reads/writes __pg_seed__ at that time. A mode switch
- * in the background does not retroactively re-inject seeds into already-loaded
- * pages. The user sees divergent identities only on fresh navigations after
- * the switch.
+ * Switching to per-tab mode affects NEWLY LOADED tabs only. anti-fingerprint.js
+ * receives its seed as a closure-local executeScript argument at document_start.
+ * A mode switch in the background does not retroactively re-inject seeds into
+ * already-loaded pages. The user sees divergent identities only on fresh
+ * navigations after the switch.
  *
  * Switching back to session mode + reloading converges tabs to the shared
- * session seed via bridge.js desync detection (same as initial tab load).
+ * session seed via closure-local pre-injection on reload.
  */
 test.describe('Session identity — mode-switch transitions (v2 item 1)', () => {
   test('session→per-tab: fresh tabs get distinct seeds', async ({ context, extensionId }) => {
@@ -320,8 +370,8 @@ test.describe('Session identity — mode-switch transitions (v2 item 1)', () => 
     await popup.waitForTimeout(1000);
     await popup.close();
 
-    // THEN open fresh pages — in per-tab mode, each tab generates its
-    // own random seed in anti-fingerprint.js and bridge.js does NOT
+    // THEN open fresh pages — in per-tab mode, each tab gets a distinct
+    // seed via executeScript({ func, args }) and the background does NOT
     // force-correct to the session seed.
     const url = getTestPageUrl();
     const page1 = await context.newPage();
@@ -332,13 +382,44 @@ test.describe('Session identity — mode-switch transitions (v2 item 1)', () => 
     await page2.goto(url);
     await page2.waitForTimeout(800);
 
-    const seed1 = await page1.evaluate(() => sessionStorage.getItem('__pg_seed__'));
-    const seed2 = await page2.evaluate(() => sessionStorage.getItem('__pg_seed__'));
+    // P0: verify per-tab mode via spoofed identity (no sessionStorage).
+    // In per-tab mode, each tab gets a distinct seed → different profile.
+    // Compare multiple properties because UA has limited entropy (few groups)
+    // — two seeds can collide on UA alone with ~16% probability.
+    const id1 = await page1.evaluate(() => ({
+      ua: navigator.userAgent,
+      cores: navigator.hardwareConcurrency,
+      mem: (navigator as any).deviceMemory,
+    }));
+    const id2 = await page2.evaluate(() => ({
+      ua: navigator.userAgent,
+      cores: navigator.hardwareConcurrency,
+      mem: (navigator as any).deviceMemory,
+    }));
 
-    // In per-tab mode, each tab should have its own distinct seed
-    expect(seed1).toBeTruthy();
-    expect(seed2).toBeTruthy();
-    expect(seed1).not.toBe(seed2);
+    expect(id1.ua).toMatch(/^Mozilla\/5\.0/);
+    expect(id2.ua).toMatch(/^Mozilla\/5\.0/);
+    // At least one identity property must differ between tabs
+    const allMatch = id1.ua === id2.ua && id1.cores === id2.cores && id1.mem === id2.mem;
+    expect(allMatch).toBe(false);
+
+    // Bring a seeded per-tab page to the foreground so tabs.onActivated
+    // installs the global dynamic UA rule for that tab's profile.
+    await page2.bringToFront();
+    await page2.waitForTimeout(300);
+    await page1.bringToFront();
+
+    const snapshot = await waitForDnrSnapshot(
+      context,
+      (state) => state.dynamicRules.some(rule => rule.id === UA_RULE_ID),
+      'per-tab dynamic UA rule'
+    );
+    const dynamicRule = snapshot.dynamicRules.find(rule => rule.id === UA_RULE_ID);
+    expect(dynamicRule).toBeTruthy();
+    expect(dynamicRule!.tabIds).toBeNull();
+    expect(dynamicRule!.requestHeaders).toEqual(expect.arrayContaining([
+      expect.objectContaining({ header: 'User-Agent', operation: 'set' }),
+    ]));
 
     await page1.close();
     await page2.close();
@@ -377,12 +458,35 @@ test.describe('Session identity — mode-switch transitions (v2 item 1)', () => 
     await page2.reload({ waitUntil: 'domcontentloaded' });
     await page2.waitForTimeout(500);
 
-    const seed1 = await page1.evaluate(() => sessionStorage.getItem('__pg_seed__'));
-    const seed2 = await page2.evaluate(() => sessionStorage.getItem('__pg_seed__'));
+    // P0: verify convergence via spoofed UA (no sessionStorage).
+    // After switching to session mode, both tabs should share one identity.
+    const ua1 = await page1.evaluate(() => navigator.userAgent);
+    const ua2 = await page2.evaluate(() => navigator.userAgent);
 
-    // After switching to session mode, both tabs should share one seed
-    expect(seed1).toBeTruthy();
-    expect(seed1).toBe(seed2);
+    expect(ua1).toMatch(/^Mozilla\/5\.0/);
+    expect(ua1).toBe(ua2);
+
+    const snapshot = await waitForDnrSnapshot(
+      context,
+      (state) => {
+        const sessionRule = state.sessionRules.find(rule => rule.id === SESSION_UA_RULE_ID);
+        const dynamicRuleRemoved = !state.dynamicRules.some(rule => rule.id === UA_RULE_ID);
+        return dynamicRuleRemoved
+          && !!sessionRule
+          && Array.isArray(sessionRule.tabIds)
+          && sessionRule.tabIds.length > 0
+          && state.testPageTabIds.length >= 2
+          && state.testPageTabIds.every(tabId => sessionRule.tabIds!.includes(tabId));
+      },
+      'session DNR rule after per-tab to session transition'
+    );
+    const sessionRule = snapshot.sessionRules.find(rule => rule.id === SESSION_UA_RULE_ID);
+    expect(snapshot.dynamicRules.map(rule => rule.id)).not.toContain(UA_RULE_ID);
+    expect(sessionRule).toBeTruthy();
+    expect(sessionRule!.tabIds).toEqual(expect.arrayContaining(snapshot.testPageTabIds));
+    expect(sessionRule!.requestHeaders).toEqual(expect.arrayContaining([
+      expect.objectContaining({ header: 'User-Agent', operation: 'set' }),
+    ]));
 
     await page1.close();
     await page2.close();

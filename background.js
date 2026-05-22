@@ -4,10 +4,10 @@
  * and fake beacon generation.
  */
 
-importScripts("profiles.js", "poisoner.js");
+importScripts("profiles.js", "poisoner.js", "anti-fingerprint-bootstrap.js");
 
-// === Storage Architecture (v2 Item 1: Session-Level Identity Default) ===
-// Three storage layers serve different lifetimes:
+// === Storage Architecture (v2 Item 1, Round 6: closure-local bootstrap) ===
+// Two storage layers serve different lifetimes:
 //
 // 1. chrome.storage.session — Extension-session scoped.
 //    Survives SW restart within a browser session. Dies on browser quit.
@@ -18,29 +18,42 @@ importScripts("profiles.js", "poisoner.js");
 //    Stores: stats, chaosLevel, identityMode.
 //    identityMode persists so the user's preference survives browser restarts.
 //
-// 3. sessionStorage (MAIN world) — Per-tab, per-origin.
-//    Stores: __pg_seed__ — the seed anti-fingerprint.js uses to derive its profile.
-//    Set by background.js via chrome.scripting.executeScript (MAIN world injection).
-//    Read by both anti-fingerprint.js (MAIN) and bridge.js (ISOLATED, shared storage).
-//    Dies when the tab closes or navigates cross-origin.
+// Seed delivery (Round 6 — closure-local, zero window rendezvous):
+//    chrome.scripting.executeScript({ func: bootstrapAntiFingerprint, args: [seed] })
+//    injects the entire anti-fingerprint bundle as a closure-local function.
+//    The seed is a function parameter — never written to window, cookies, or
+//    sessionStorage. No content script in manifest for anti-fingerprinting.
+//    No deferred setter trap. No dead setter. No convergence events.
+//    Idempotence tracked extension-side via tabId/documentId.
+//
+// Strict bootstrap contract (Round 10 — success-driven DNR):
+//    HTTP UA spoofing (session-scoped DNR with condition.tabIds) applies
+//    ONLY for tabs with verified MAIN-world bootstrap for the current document.
+//    Proof lifecycle:
+//    - Tab enters DNR only after executeScript .then() confirms (never before).
+//    - On navigation/reload: proof cleared via onBeforeNavigate + tabs.onUpdated.
+//      Tab removed from DNR until new document's bootstrap succeeds.
+//    - On rotate/mode-switch: bootstrappedTabs cleared, DNR cleared before reload.
+//      Tabs re-verify via executeScript on reload.
+//    - On SW wake: bootstrappedTabs NOT rebuilt from tabSeeds. Instead, tabs
+//      are re-bootstrapped via executeScript and re-earn DNR eligibility.
+//    - On injection failure: tabSeed AND proof removed (no false inference).
+//    First-navigation residual (documented per rowan Gate 3):
+//    main_frame request may race with DNR update from onBeforeNavigate.
+//    JS UA is native until executeScript completes. From first subresource
+//    after bootstrap: both JS and HTTP are coherent.
+//
+//    Round 8: mode-transition safety. When switching from per-tab mode
+//    (which uses global dynamic rule UA_RULE_ID=9999) back to session mode,
+//    the stale global rule is explicitly removed. updateTabScopedDNR()
+//    defensively clears it in session mode. Only per-tab mode may install
+//    the global dynamic UA rule.
 //
 // Identity lifetime (session mode, the default):
 //   One identity per browser session, rotating every 24h (alarm-based).
 //   On browser restart, chrome.storage.session is empty → restoreState() finds
 //   no profile → calls rotateIdentity() → fresh identity + new UA rule.
 //   The 24h alarm also rotates within a running session.
-//
-// Cold-start alignment (Item 2):
-//   On cold start, restoreState() reads lastSeed/lastUA from chrome.storage.local
-//   and applies the stale UA to the DNR rule immediately, before rotateIdentity()
-//   generates a fresh identity (~ms later). Pre-injection via chrome.tabs.onUpdated
-//   (injectImmediately:true) races the session seed into sessionStorage before
-//   anti-fingerprint.js runs. If pre-injection wins, no desync occurs.
-//   If pre-injection loses the race, anti-fingerprint.js generates a random seed
-//   and bridge.js sends seedObserved — background silently corrects sessionStorage
-//   via scripting.executeScript (no reload). The first page load on a new origin
-//   may have a JS/network UA mismatch (documented residual gap); all subsequent
-//   same-origin navigations are aligned.
 
 // === State ===
 const STATE = {
@@ -49,7 +62,9 @@ const STATE = {
   identityMode: "session", // "session" (default) | "per-tab" (expert)
   currentSeed: 0,
   sessionSeed: 0,          // canonical seed for session mode
-  tabSeeds: {},  // { tabId: seed } — per-tab seed from page's anti-fingerprint.js
+  tabSeeds: {},  // { tabId: seed } — per-tab seed, background is authority
+  bootstrappedDocs: new Set(),  // Set<docKey> — idempotence (P0-4: extension-side only)
+  bootstrappedTabs: new Set(),  // Set<tabId> — tabs with active JS bootstrap (for tab-scoped DNR)
   stats: {
     trackersBlocked: 0,
     cookiesCleaned: 0,
@@ -85,9 +100,8 @@ chrome.runtime.onInstalled.addListener(async () => {
   // call raced with permission grant.
   await applyWebRTCPolicy();
 
-  // Generate initial identity (writes profile to session storage, updates UA)
-  await createIdentity();
-
+  // Set default state (identity creation is handled by restoreState
+  // to avoid a double-rotation race on first install).
   await chrome.storage.session.set({
     enabled: true,
     chaosLevel: "balanced",
@@ -100,9 +114,6 @@ chrome.runtime.onInstalled.addListener(async () => {
     identityMode: "session",
   });
 
-  // Select initial poisoner persona
-  POISONER.selectPersona();
-
   // Set up periodic alarms
   // Session mode: 24h rotation (realistic browser session cadence)
   chrome.alarms.create("rotateIdentity", { periodInMinutes: 1440 });
@@ -111,8 +122,18 @@ chrome.runtime.onInstalled.addListener(async () => {
   scheduleNextBeacon("balanced");
 });
 
-// Restore state on service worker wake (also runs when SW wakes from idle)
-async function restoreState() {
+// Restore state on service worker wake (also runs when SW wakes from idle).
+// Promise guard: both the top-level call and onStartup can fire concurrently
+// on fresh browser launch. Without the guard, two restoreState() calls both
+// see no session profile and both call rotateIdentity(), creating two different
+// seeds — the last writer wins storage but the first seed may already be used
+// for a tab injection (race condition).
+let _restorePromise = null;
+function restoreState() {
+  if (!_restorePromise) _restorePromise = _doRestore();
+  return _restorePromise;
+}
+async function _doRestore() {
   const data = await chrome.storage.local.get(["stats", "chaosLevel", "identityMode"]);
   if (data.stats) Object.assign(STATE.stats, data.stats);
   if (data.chaosLevel) STATE.chaosLevel = data.chaosLevel;
@@ -162,21 +183,43 @@ async function restoreState() {
     }
   }
 
-  // Item 2: On cold start (no session profile), apply stale UA from local
-  // storage immediately so the DNR rule has a spoofed value before any
-  // navigation fires. rotateIdentity() below overwrites with fresh UA ~ms later.
+  // Round 6: cold start vs warm restart.
   if (!sessionData.profile) {
-    const local = await chrome.storage.local.get(["lastSeed", "lastUA"]);
-    if (local.lastUA) {
-      await updateUAHeaderRule(local.lastUA);
-    }
+    // Cold start (no session profile). restoreState is the sole authority
+    // for identity creation — onInstalled only sets up alarms and defaults.
+    // This avoids the double-rotation race on first install.
     await rotateIdentity();
   } else {
-    // Re-apply UA header rule from stored profile. DNR dynamic rules
-    // persist across SW restarts, but re-applying ensures the rule
-    // matches the current profile after extension updates or if the
-    // rule was cleared for any reason.
-    await updateUAHeaderRule(sessionData.profile.userAgent);
+    // Warm restart (SW woke from idle with existing profile).
+    // Round 10: success-driven DNR. Do NOT rebuild bootstrappedTabs from
+    // tabSeeds — that infers proof from intent (rowan Gate 2). Instead,
+    // re-inject executeScript into tabs that had seeds and let each tab
+    // re-earn DNR eligibility via the normal .then() proof path.
+    // Round 8: if restoring into session mode, remove any stale global
+    // dynamic UA rule that may have been left from a prior per-tab session.
+    if (STATE.identityMode === "session") {
+      await removeGlobalUAHeaderRule();
+    }
+    // Re-bootstrap tabs with verified proof (not inferred from tabSeeds).
+    const rebootstrapPromises = Object.keys(STATE.tabSeeds).map(tabIdStr => {
+      const tabId = parseInt(tabIdStr, 10);
+      const seed = STATE.tabSeeds[tabId];
+      return chrome.scripting.executeScript({
+        target: { tabId, allFrames: false },
+        world: "MAIN",
+        injectImmediately: true,
+        func: bootstrapAntiFingerprint,
+        args: [seed],
+      }).then(() => {
+        STATE.bootstrappedTabs.add(tabId);
+      }).catch(() => {
+        // Tab no longer injectable (closed, navigated to chrome://, etc.)
+        delete STATE.tabSeeds[tabId];
+      });
+    });
+    await Promise.allSettled(rebootstrapPromises);
+    await persistTabSeeds();
+    await updateTabScopedDNR();
     if (!POISONER._activeClusters) {
       // SW woke from idle with existing profile — reinit persona
       POISONER.selectPersona();
@@ -192,56 +235,121 @@ chrome.runtime.onStartup.addListener(restoreState);
 // Also restore immediately on script load (covers SW wake from idle)
 restoreState();
 
-// === Item 2: Seed Pre-injection ===
-// Pre-inject session seed into sessionStorage before content scripts run.
-// chrome.tabs.onUpdated fires with status "loading" when a navigation commits.
-// injectImmediately:true races ahead of document_start content scripts.
-// If the injection wins, anti-fingerprint.js finds __pg_seed__ already set
-// and uses the session profile — no desync, no reload.
+// === Closure-local bootstrap injection (Round 6/7) ===
+// Delivers the entire anti-fingerprint bundle + seed via executeScript.
+// Zero window rendezvous — seed is a closure-local function argument.
+// bootstrapAntiFingerprint(seed) is loaded via importScripts above.
+//
+// Strict bootstrap contract (Round 10 — success-driven DNR):
+// DNR eligibility requires verified MAIN-world bootstrap for the current
+// document. Proof is revoked on every navigation/reload (onBeforeNavigate
+// + tabs.onUpdated clears bootstrappedTabs) and re-earned only after
+// executeScript .then() confirms. No pre-trust from tabSeeds, intent,
+// or prior-document bootstrap. SW wake re-bootstraps via executeScript
+// instead of inferring proof. Rotate/mode-switch clear before reload.
+//
+// Idempotence (P0-4): tracked extension-side via tabId:url.
+// No window flags (__pg_bootstrapped__ etc.) — nothing page-observable.
+
+// Round 10: revoke DNR eligibility before navigation starts (fail-closed).
+// onBeforeNavigate fires before the main_frame request, giving
+// updateTabScopedDNR() time to remove the tab from the session rule.
+// If the DNR update wins the race, the main_frame request has native UA.
+// If the request wins, it inherits the stale session rule's spoofed UA.
+// This race is sub-millisecond and documented per rowan Gate 3.
+chrome.webNavigation.onBeforeNavigate.addListener((details) => {
+  if (details.frameId !== 0) return;
+  if (STATE.bootstrappedTabs.has(details.tabId)) {
+    STATE.bootstrappedTabs.delete(details.tabId);
+    updateTabScopedDNR(); // async, fire-and-forget
+  }
+});
+
+// Clear stale docKeys when a new document commits in a tab.
+chrome.webNavigation.onCommitted.addListener((details) => {
+  if (details.frameId !== 0) return;
+  for (const key of STATE.bootstrappedDocs) {
+    if (key.startsWith(`${details.tabId}:`)) STATE.bootstrappedDocs.delete(key);
+  }
+});
+
+// Full bootstrap injection via tabs.onUpdated.
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== "loading") return;
+
+  // Round 10: revoke DNR eligibility on any navigation/reload. The old
+  // document's JS context is destroyed; proof must be re-earned. This
+  // fires even for non-injectable URLs (chrome://, disabled, etc.)
+  // because the prior document's bootstrap is gone regardless.
+  // Belt-and-suspenders with onBeforeNavigate (which fires earlier).
+  if (STATE.bootstrappedTabs.has(tabId)) {
+    STATE.bootstrappedTabs.delete(tabId);
+    updateTabScopedDNR(); // async, fire-and-forget
+  }
+
   if (!STATE.sessionSeed || !STATE.enabled) return;
-  if (!tab.url || tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://")) return;
+  if (!tab.url || tab.url === "about:blank" || tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://")) return;
 
-  const seedToInject = (STATE.identityMode === "session")
-    ? STATE.sessionSeed
-    : (STATE.tabSeeds[tabId] || STATE.sessionSeed);
+  // A "loading" status means a new navigation or reload — the old document's
+  // bootstrap is gone (new JS execution context). Clear stale docKeys for
+  // this tab before the idempotence check. This is critical because
+  // tabs.onUpdated fires BEFORE webNavigation.onCommitted, so the old
+  // docKey would still be present without this cleanup.
+  for (const key of STATE.bootstrappedDocs) {
+    if (key.startsWith(`${tabId}:`)) STATE.bootstrappedDocs.delete(key);
+  }
 
+  const docKey = `${tabId}:${tab.url}`;
+  if (STATE.bootstrappedDocs.has(docKey)) return;
+
+  let seedToInject;
+  if (STATE.identityMode === "session") {
+    seedToInject = STATE.sessionSeed;
+  } else {
+    // Per-tab mode: use existing tab seed if any, otherwise generate
+    // a unique seed for this tab (not the session seed — each tab must differ).
+    if (STATE.tabSeeds[tabId]) {
+      seedToInject = STATE.tabSeeds[tabId];
+    } else {
+      const arr = new Uint32Array(1);
+      crypto.getRandomValues(arr);
+      seedToInject = arr[0];
+    }
+  }
+
+  // Track tab seed (background is the authority)
+  STATE.tabSeeds[tabId] = seedToInject;
+  persistTabSeeds();
+
+  // Inject the FULL bootstrap function with seed as closure-local arg.
+  // No window rendezvous. The function runs entirely in closure scope.
+  // allFrames:false — top frame only. Same-origin iframes share prototypes.
   chrome.scripting.executeScript({
-    // allFrames:false is intentional — pre-inject into the top frame only.
-    // Cross-origin iframes have their own sessionStorage partitions and cannot
-    // share __pg_seed__ with the top frame. Injecting into iframes would write
-    // seeds that anti-fingerprint.js in those frames may or may not read
-    // (depends on iframe origin). The cross-origin iframe residual is explicit
-    // and accepted as a boundary of Item 2's alignment guarantee.
     target: { tabId: tabId, allFrames: false },
     world: "MAIN",
     injectImmediately: true,
-    func: (s, isSession) => {
-      try {
-        const existing = sessionStorage.getItem("__pg_seed__");
-        if (!existing) {
-          // Pre-injection won the race: set seed before content script reads it.
-          sessionStorage.setItem("__pg_seed__", String(s));
-        } else if (isSession && parseInt(existing, 10) !== s) {
-          // Seed race: content script generated a random seed before
-          // pre-injection arrived. Overwrite sessionStorage and dispatch
-          // convergence event to update the live profile in place.
-          // dispatchEvent is synchronous — profile updates before this
-          // function returns. No window property needed.
-          sessionStorage.setItem("__pg_seed__", String(s));
-          try {
-            window.dispatchEvent(new CustomEvent("__pgc", { detail: s }));
-          } catch(e2) {}
-        }
-      } catch(e) {}
-    },
-    args: [seedToInject, STATE.identityMode === "session"],
-  }).catch(() => {}); // Tab may not be injectable (chrome://, devtools, etc.)
+    func: bootstrapAntiFingerprint,
+    args: [seedToInject],
+  }).then(() => {
+    STATE.bootstrappedDocs.add(docKey);
+    STATE.bootstrappedTabs.add(tabId);
+    updateTabScopedDNR();
+  }).catch(() => {
+    // Injection failed (non-injectable page, restricted URL, etc.).
+    // Remove BOTH bootstrap proof AND seed — prevents SW wake from
+    // falsely inferring this tab was bootstrapped (rowan blocker 1).
+    STATE.bootstrappedTabs.delete(tabId);
+    delete STATE.tabSeeds[tabId];
+    persistTabSeeds();
+    updateTabScopedDNR();
+  });
 });
 
-// === Dynamic User-Agent Header Rule ===
-// Updates the declarativeNetRequest dynamic rule to spoof the UA HTTP header
+// === Dynamic User-Agent Header Rule (per-tab mode only) ===
+// Per-tab mode uses a global dynamic UA rule (not tab-scoped session rule)
+// switched via tabs.onActivated. This is NOT covered by the strict bootstrap
+// contract — per-tab mode is expert-only and de-scoped from v0.1.0 proof claim.
+// Session mode (the default) uses updateTabScopedDNR() with verified proof.
 const UA_RULE_ID = 9999;
 
 async function updateUAHeaderRule(userAgent) {
@@ -267,14 +375,90 @@ async function updateUAHeaderRule(userAgent) {
   } catch(e) {}
 }
 
+// Round 8: remove the global per-tab dynamic UA rule.
+// Called when entering/restoring session mode to prevent a stale global
+// rule from overriding the tab-scoped session rule after a per-tab → session
+// transition. Per-tab mode is the only path that may install UA_RULE_ID.
+async function removeGlobalUAHeaderRule() {
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [UA_RULE_ID],
+    });
+  } catch(e) {}
+}
+
+// === Tab-Scoped DNR (Round 10: success-driven via session rules + tabIds) ===
+// Session mode: HTTP UA is spoofed only for tabs where JS bootstrap succeeded.
+// Uses chrome.declarativeNetRequest.updateSessionRules with condition.tabIds
+// so unbootstrapped tabs (chrome://, failed executeScript) get native UA.
+// Session rules are ephemeral — they die when the browser closes, which is
+// correct because bootstrappedTabs is also ephemeral.
+//
+// Per-tab mode: uses global dynamic rule (no tabIds) since UA changes per
+// active tab via updateUAHeaderRule in tabs.onActivated. Per-tab mode is
+// expert-only, de-scoped from v0.1.0 strict proof claim, and the UA
+// mismatch on non-bootstrapped tabs is an accepted trade-off.
+const SESSION_UA_RULE_ID = 9998;
+
+async function updateTabScopedDNR() {
+  // Round 8: defensively remove the global per-tab dynamic rule when in
+  // session mode. Prevents a stale UA_RULE_ID=9999 from surviving a
+  // per-tab → session mode transition and overriding tab-scoped DNR.
+  if (STATE.identityMode === "session") {
+    await removeGlobalUAHeaderRule();
+  }
+
+  const tabIds = [...STATE.bootstrappedTabs];
+
+  // Get current UA — derive from in-memory STATE.sessionSeed to stay
+  // coherent with executeScript injections (which also use STATE.sessionSeed).
+  // Avoids async race with chrome.storage.session reads.
+  let ua = null;
+  if (STATE.sessionSeed) {
+    ua = generateProfile(STATE.sessionSeed).userAgent;
+  }
+
+  if (tabIds.length === 0 || !ua) {
+    // No bootstrapped tabs or no profile — remove the session rule entirely
+    try {
+      await chrome.declarativeNetRequest.updateSessionRules({
+        removeRuleIds: [SESSION_UA_RULE_ID],
+      });
+    } catch(e) {}
+    return;
+  }
+
+  try {
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [SESSION_UA_RULE_ID],
+      addRules: [{
+        id: SESSION_UA_RULE_ID,
+        priority: 3,
+        action: {
+          type: "modifyHeaders",
+          requestHeaders: [
+            { header: "User-Agent", operation: "set", value: ua },
+          ],
+        },
+        condition: {
+          urlFilter: "*",
+          tabIds: tabIds,
+          resourceTypes: ["main_frame", "sub_frame", "xmlhttprequest", "script", "image", "stylesheet", "font", "media", "other"],
+        },
+      }],
+    });
+  } catch(e) {}
+}
+
 // === Identity Rotation ===
 // Single authority: background owns seed + profile.
 // createIdentity() generates a new seed, derives the profile, writes
 // to chrome.storage.session, and updates the UA header. The stored
 // profile serves as fallback for getState when no tab-specific seed
 // is available (e.g., before any page has loaded after rotation).
-// Tab-specific seeds from bridge.js (seedObserved) take precedence
-// in getState — see tabSeeds.
+// Tab seeds are stored in STATE.tabSeeds (background is the authority).
+// In session mode all tabs share STATE.sessionSeed; in per-tab mode
+// each tab gets a distinct seed via generateSessionSeed().
 async function createIdentity(seed) {
   if (seed === undefined) seed = generateSessionSeed();
   STATE.currentSeed = seed;
@@ -285,7 +469,9 @@ async function createIdentity(seed) {
   // restoreState() reads lastSeed/lastUA to bootstrap the DNR rule
   // before rotateIdentity() generates a fresh identity.
   await chrome.storage.local.set({ lastSeed: seed, lastUA: profile.userAgent });
-  await updateUAHeaderRule(profile.userAgent);
+  // Round 6: update tab-scoped DNR with new UA for all bootstrapped tabs.
+  // On rotation, existing bootstrapped tabs need the new UA value.
+  await updateTabScopedDNR();
   return { seed, profile };
 }
 
@@ -368,7 +554,6 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       // Skips and reschedules if no suitable active tab (no SW fallback).
       {
         const configs = POISONER.buildBatchConfigs(STATE.chaosLevel);
-        let usedPageContext = false;
         try {
           const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
           if (tab && tab.id && tab.url &&
@@ -384,7 +569,6 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
               configs: configs,
               domChaff: domPayload,
             });
-            usedPageContext = true;
           }
         } catch(e) {
           // sendMessage failed (no content script, restricted page, etc.)
@@ -479,30 +663,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         await chrome.alarms.clear("rotateIdentity");
         if (msg.mode === "session") {
           chrome.alarms.create("rotateIdentity", { periodInMinutes: 1440 });
-          // Restore session coherence: update UA header to session profile,
+          // Round 8: explicitly remove the global per-tab dynamic rule before
+          // switching to session mode's tab-scoped DNR. updateTabScopedDNR
+          // also removes it defensively, but this ensures it's gone even if
+          // the tab-scoped update is a no-op (e.g., no bootstrapped tabs yet).
+          await removeGlobalUAHeaderRule();
+          // Restore session coherence: update tab-scoped DNR to session profile,
           // inject session seed into all tabs, and reload.
-          const sessionData = await chrome.storage.session.get(["profile"]);
-          if (sessionData.profile) {
-            await updateUAHeaderRule(sessionData.profile.userAgent);
-          }
+          // Round 6: tabs.onUpdated delivers bootstrap via executeScript on reload.
           const tabs = await chrome.tabs.query({}).catch(() => []);
           const httpTabs = tabs.filter(t => t.url && (t.url.startsWith("http://") || t.url.startsWith("https://")));
           for (const tab of httpTabs) {
-            try {
-              await chrome.scripting.executeScript({
-                target: { tabId: tab.id, allFrames: true },
-                world: "MAIN",
-                func: (s) => {
-                  try { sessionStorage.setItem("__pg_seed__", String(s)); } catch(e) {}
-                },
-                args: [STATE.sessionSeed],
-              });
-              STATE.tabSeeds[tab.id] = STATE.sessionSeed;
-            } catch(e) {}
+            STATE.tabSeeds[tab.id] = STATE.sessionSeed;
           }
+          // Clear bootstrappedTabs — reload will re-verify via executeScript.
+          // Don't pre-trust: DNR stays stale until tabs.onUpdated .then() confirms.
+          STATE.bootstrappedTabs.clear();
           await persistTabSeeds();
+          await updateTabScopedDNR();
           sendResponse({ ok: true });
-          // Reload all tabs so pages pick up the session seed
+          // Reload all tabs — tabs.onUpdated delivers bootstrap on reload
           setTimeout(async () => {
             for (const tab of httpTabs) {
               try { await chrome.tabs.reload(tab.id); } catch(e) {}
@@ -554,17 +734,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             ? sessionSeed
             : generateSessionSeed();
 
-          try {
-            await chrome.scripting.executeScript({
-              target: { tabId: tab.id, allFrames: true },
-              world: "MAIN",
-              func: (s) => {
-                try { sessionStorage.setItem("__pg_seed__", String(s)); } catch(e) {}
-              },
-              args: [tabSeed],
-            });
-            STATE.tabSeeds[tab.id] = tabSeed;
-          } catch(e) {}
+          // Store seed so tabs.onUpdated uses it on reload. Do NOT add to
+          // bootstrappedTabs — reload will re-verify via executeScript .then().
+          STATE.tabSeeds[tab.id] = tabSeed;
 
           // Per-tab mode: set UA header to match the active tab's seed
           if (STATE.identityMode === "per-tab" && tab.id === activeTabId) {
@@ -573,7 +745,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
 
+        // Clear bootstrappedTabs for target tabs — DNR stays stale until
+        // tabs.onUpdated .then() confirms each bootstrap after reload.
+        for (const tab of targetTabs) {
+          STATE.bootstrappedTabs.delete(tab.id);
+        }
         await persistTabSeeds();
+        await updateTabScopedDNR();
 
         // Respond BEFORE reloading (reloading active tab kills popup)
         sendResponse({ ok: true, rotated: true });
@@ -642,26 +820,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ stats: STATE.stats });
       break;
 
-    case "setDisableFlag":
-      // Legacy path — bridge.js no longer sends this (uses checkSiteOverride
-      // instead). Retained for backward compatibility during transition.
-      if (sender.tab && Number.isInteger(sender.tab.id)) {
-        const tabId = sender.tab.id;
-        const disabled = msg.disabled;
-        chrome.scripting.executeScript({
-          target: { tabId: tabId },
-          world: "MAIN",
-          func: (flag) => {
-            try {
-              if (flag) document.cookie = "__pgd=1;path=/;SameSite=Lax";
-              else document.cookie = "__pgd=;path=/;expires=Thu, 01 Jan 1970 00:00:00 GMT";
-            } catch(e) {}
-          },
-          args: [disabled],
-        }).catch(() => {});
-      }
-      break;
-
     case "chaffFired":
       // bridge.js reports actual beacon count after page-context firing.
       // Stats only increment here — never on queue/injection.
@@ -674,98 +832,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case "domChaffApplied":
       // bridge.js reports how many ad containers received attribute injection.
       // Informational — does not increment fakeBeaconsFired (no network).
-      break;
-
-    case "testDNRChaff":
-      // Diagnostic: prove sendBeacon (ping) bypasses DNR rules while
-      // fetch (xmlhttprequest) is blocked. Uses testMatchOutcome() which
-      // requires declarativeNetRequestFeedback permission.
-      // Call from extension console: chrome.runtime.sendMessage({type:"testDNRChaff"}, r => console.log(JSON.stringify(r, null, 2)))
-      (async () => {
-        try {
-          const testUrls = [
-            "https://www.google-analytics.com/collect?v=1&t=pageview",
-            "https://www.google-analytics.com/g/collect?v=2&en=page_view",
-            "https://www.facebook.com/tr/?id=123456&ev=PageView",
-          ];
-          const results = [];
-          for (const url of testUrls) {
-            // Test as "ping" (sendBeacon resource type)
-            const pingResult = await chrome.declarativeNetRequest.testMatchOutcome({
-              url: url,
-              type: "ping",
-              initiator: "https://example.com",
-            });
-            // Test as "xmlhttprequest" (fetch resource type)
-            const xhrResult = await chrome.declarativeNetRequest.testMatchOutcome({
-              url: url,
-              type: "xmlhttprequest",
-              initiator: "https://example.com",
-            });
-            results.push({
-              url: url.substring(0, 60),
-              ping: { matched: pingResult.matchedRules.length, rules: pingResult.matchedRules },
-              xmlhttprequest: { matched: xhrResult.matchedRules.length, rules: xhrResult.matchedRules },
-            });
-          }
-          sendResponse({ ok: true, results: results });
-        } catch(e) {
-          sendResponse({ ok: false, error: e.message });
-        }
-      })();
-      return true;
-
-    case "seedObserved":
-      // Bridge.js (ISOLATED world) read the seed from sessionStorage
-      // (shared with MAIN world anti-fingerprint.js) and sent it here.
-      if (sender.tab && Number.isInteger(sender.tab.id) && msg.seed) {
-        const observedSeed = parseInt(msg.seed, 10);
-        (async () => {
-          try {
-            if (STATE.identityMode === "session") {
-              if (observedSeed !== STATE.sessionSeed && STATE.sessionSeed) {
-                // Item 2: Correct sessionStorage and converge the live profile.
-                // The pre-injection may have already converged (if it ran after
-                // the content script but before bridge.js). convergeToSeed is
-                // idempotent — calling it twice with the same seed is a no-op.
-                // No reload needed — convergence updates profile in place.
-                await chrome.scripting.executeScript({
-                  target: { tabId: sender.tab.id, allFrames: true },
-                  world: "MAIN",
-                  func: (s) => {
-                    try {
-                      sessionStorage.setItem("__pg_seed__", String(s));
-                      // Dispatch convergence event. If the handler already
-                      // self-removed (pre-injection already converged), this
-                      // is a no-op — no listeners, event just drops.
-                      try {
-                        window.dispatchEvent(new CustomEvent("__pgc", { detail: s }));
-                      } catch(e2) {}
-                    } catch(e) {}
-                  },
-                  args: [STATE.sessionSeed],
-                }).catch(() => {});
-                // Store the SESSION seed, not the observed (wrong) seed
-                STATE.tabSeeds[sender.tab.id] = STATE.sessionSeed;
-                await persistTabSeeds();
-                return;
-              }
-              // Seed matches session — store it
-              STATE.tabSeeds[sender.tab.id] = observedSeed;
-              await persistTabSeeds();
-            } else {
-              // Per-tab mode: store and update UA if active tab
-              STATE.tabSeeds[sender.tab.id] = observedSeed;
-              await persistTabSeeds();
-              const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-              if (activeTab && activeTab.id === sender.tab.id) {
-                const profile = generateProfile(observedSeed);
-                await updateUAHeaderRule(profile.userAgent);
-              }
-            }
-          } catch(e) {}
-        })();
-      }
       break;
 
     case "checkSiteOverride":
@@ -796,27 +862,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-// === Tab lifecycle: clean up tabSeeds and update UA header ===
+// === Tab lifecycle: clean up tabSeeds, bootstrap state, and DNR ===
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   delete STATE.tabSeeds[tabId];
+  STATE.bootstrappedTabs.delete(tabId);
+  for (const key of STATE.bootstrappedDocs) {
+    if (key.startsWith(`${tabId}:`)) STATE.bootstrappedDocs.delete(key);
+  }
   await persistTabSeeds();
+  updateTabScopedDNR();
 });
 
-// When user switches tabs, update the UA header to match the new
-// active tab's identity. Session mode: no-op (UA is always the session
-// identity). Per-tab mode: switch UA to the new tab's seed.
+// When user switches tabs in per-tab mode, update the tab-scoped DNR
+// rule's UA value to match the new active tab's identity.
+// Session mode: no-op (all tabs share the same UA).
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   if (STATE.identityMode === "session") return; // UA is already correct
   const seed = STATE.tabSeeds[activeInfo.tabId];
   if (seed) {
+    // Per-tab mode: temporarily override the session profile's UA
+    // with this tab's profile UA for the DNR rule. updateTabScopedDNR
+    // reads from session storage, so we update the stored profile.
     const profile = generateProfile(seed);
     await updateUAHeaderRule(profile.userAgent);
-  } else {
-    // Tab hasn't reported a seed yet — use the rotation identity
-    const sessionData = await chrome.storage.session.get(["profile"]);
-    if (sessionData.profile) {
-      await updateUAHeaderRule(sessionData.profile.userAgent);
-    }
   }
 });
 
@@ -845,8 +913,7 @@ async function persistStats() {
 // === Tab Seeds Persistence ===
 // Persists tabSeeds to chrome.storage.session so they survive MV3
 // service worker idle/restart. Without this, SW restart causes getState
-// and tabs.onActivated to fall back to the rotation profile while
-// pages keep their sessionStorage seeds.
+// and tabs.onActivated to fall back to the rotation profile.
 async function persistTabSeeds() {
   try {
     await chrome.storage.session.set({ tabSeeds: STATE.tabSeeds });

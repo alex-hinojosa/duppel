@@ -2,35 +2,27 @@
  * Duppel — Anti-Fingerprint Core Module
  * Creates an immutable context object with all shared state.
  *
- * Architecture (rowan review pass 2, 2026-05-08):
- * - One-way immutable bootstrap. Reads seed from sessionStorage once,
- *   generates profile, applies overrides. NO message bus, NO live updates.
+ * Architecture (Round 6, 2026-05-21 — closure-local bootstrap):
+ * - One-way immutable bootstrap. Seed passed as parameter from
+ *   bootstrapAntiFingerprint(seed), which is injected by background.js
+ *   via chrome.scripting.executeScript({ func, args }). Zero window
+ *   rendezvous — the seed is a closure-local function argument.
+ *   No cookie channel, no window properties, no setter traps.
  * - Original function references saved BEFORE wrapping — prevents wrapper
  *   stacking on any future re-application.
- * - Rotation = background.js clears sessionStorage seed + reloads tabs.
- *   Each tab generates a fresh identity on reload.
- * - Cross-origin iframes generate independent seeds. This is an inherent
- *   limitation of the content-script model. The HTTP User-Agent header
- *   still matches (set globally via declarativeNetRequest). JS-level
- *   fingerprints in cross-origin iframes may differ from the top frame.
- *   Fixable only at network level (Phase 2 proxy).
+ * - Rotation = background.js updates STATE.tabSeeds + reloads tabs.
+ *   Each tab gets bootstrap via executeScript on reload.
+ * - Cross-origin iframes get no spoofing (different security origin).
+ *   Same-origin iframes share prototypes with the top frame.
+ *   Tab-scoped DNR ensures HTTP UA coherence per tab.
  * - Per-site disable via cookie (__pgd). Set by background.js via
  *   chrome.scripting.executeScript in MAIN world before reload;
- *   checked synchronously here. NOTE: JS-created cookies cannot be
- *   httpOnly, so __pgd IS readable by page JS. The key is generic
- *   but detectable once known. This is a detection risk (reveals
- *   extension presence), not a privacy leak (does not expose real
- *   identity). Known limitation for v1.0.
+ *   checked synchronously in bootstrap-entry.js.
  */
 
-export function createContext() {
-  // === Disable check (synchronous, before any overrides) ===
-  // Uses a cookie instead of localStorage to avoid extension-detection
-  // leaks (rowan pass 3: page JS could read localStorage.__pg_off__
-  // to detect Duppel). The cookie key is intentionally generic.
-  try {
-    if (document.cookie.split(";").some(c => c.trim().startsWith("__pgd=1"))) return null;
-  } catch(e) {}
+export function createContext(sessionSeed) {
+  // Disable check runs in the bootstrap entry before createContext is called.
+  // createContext is only called with a validated seed.
 
   // === Save original function references BEFORE any wrapping ===
   // Prevents wrapper stacking (rowan pass 2 finding #2): even if this
@@ -49,6 +41,7 @@ export function createContext() {
     getOwnPropertyDescriptors: Object.getOwnPropertyDescriptors,
     reflectGOPD: typeof Reflect !== "undefined" ? Reflect.getOwnPropertyDescriptor : null,
     promiseResolve: Promise.resolve,
+    promiseReject: Promise.reject,
     freeze: Object.freeze,
   };
   if (typeof WebGLRenderingContext !== "undefined") {
@@ -84,9 +77,6 @@ export function createContext() {
   // (e.g., Chrome TLS + Firefox UA, ANGLE WebGL + native GL strings).
   const _realUA = navigator.userAgent;
   const _isFirefox = /Firefox\//.test(_realUA);
-  const _isEdge = /Edg\//.test(_realUA);
-  // Chrome, Edge, Opera, Brave all share Chromium engine (ANGLE WebGL, Client Hints)
-  const _isChromium = !_isFirefox && /Chrome\//.test(_realUA);
 
   // === Plausible profile combos (correlated GPU/UA groups) ===
   const UA_GROUPS = [
@@ -267,57 +257,22 @@ export function createContext() {
     return fallback[tz] || 300;
   }
 
-  // === Session seed ===
-  // Background.js pre-injects the session seed via chrome.tabs.onUpdated +
-  // injectImmediately (Item 2). If the pre-injection won the race, __pg_seed__
-  // is already set below. If not (race lost or first-ever cold start), a random
-  // seed is generated — bridge.js detects the desync and background silently
-  // corrects sessionStorage for future same-origin navigations (no reload).
-  let sessionSeed;
-  try {
-    // Iframes: try to inherit parent seed (same-origin only)
-    if (window !== window.top) {
-      try {
-        const parentSeed = window.top.sessionStorage.getItem("__pg_seed__");
-        if (parentSeed) sessionSeed = parseInt(parentSeed, 10);
-      } catch(e) {
-        // Cross-origin iframe — inherent limitation, generates own seed
-      }
-    }
-    if (!sessionSeed) {
-      const stored = sessionStorage.getItem("__pg_seed__");
-      if (stored) {
-        sessionSeed = parseInt(stored, 10);
-      } else {
-        sessionSeed = Date.now() ^ (crypto.getRandomValues(new Uint32Array(1))[0]);
-        sessionStorage.setItem("__pg_seed__", String(sessionSeed));
-      }
-    }
-  } catch(e) {
-    sessionSeed = Date.now() ^ (crypto.getRandomValues(new Uint32Array(1))[0]);
-  }
-
+  // === Session seed — passed from bootstrap-entry.js ===
+  // The bootstrap function receives the seed as a closure-local parameter
+  // via chrome.scripting.executeScript({ func, args }). createContext
+  // receives the validated seed. No window interaction here.
   const profile = generateProfile(sessionSeed);
-  const bioSeed = (profile.canvasSeed ^ 0x42494F4D) >>> 0; // biometric noise seed
 
-  // Seed convergence — allows background.js to correct the profile
-  // when the content script won the seed pre-injection race and used
-  // a random seed. Updates profile in place; all closures that read
-  // profile.* at call time see the corrected values immediately.
-  // Called by background.js pre-injection or seedObserved handler via
-  // window.__pg_converge__ (set up in index.js).
-  function convergeToSeed(correctSeed) {
-    if (correctSeed === sessionSeed) return false;
-    sessionSeed = correctSeed;
-    const newProfile = generateProfile(correctSeed);
-    for (const key of Object.keys(newProfile)) {
-      profile[key] = newProfile[key];
-    }
-    return true;
-  }
-
-  // Compute DST-aware offset BEFORE we proxy Intl.DateTimeFormat
-  const currentTzOffset = getTimezoneOffset(profile.timezone);
+  // Mutable state — exposed via ctx.state so closures in installMisc/
+  // installBiometric read current values at call time, not stale
+  // destructured primitives (rowan P0 R2 finding #3).
+  // sessionSeed included so enumerateDevices computes device IDs at
+  // call time (rowan P0 R3 finding #2: stale deviceSpecs fix).
+  const state = {
+    sessionSeed: sessionSeed,
+    bioSeed: (profile.canvasSeed ^ 0x42494F4D) >>> 0,
+    currentTzOffset: getTimezoneOffset(profile.timezone),
+  };
 
   // === toString / descriptor hardening infrastructure (v2 item 6) ===
   // WeakMap-based toString: disguised functions don't carry an own toString
@@ -448,14 +403,11 @@ export function createContext() {
   return {
     ORIG,
     profile,
-    bioSeed,
-    sessionSeed,
-    currentTzOffset,
+    state,
     spoof,
     disguise,
     mulberry32,
     _nativeStrings,
     _spoofedProps,
-    convergeToSeed,
   };
 }

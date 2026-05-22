@@ -64,4 +64,53 @@ test.describe('measureText noise', () => {
     });
     expect(result).toBe(true);
   });
+
+  test('measureText returns object with width property', async ({ extensionPage }) => {
+    const result = await extensionPage.evaluate(() => {
+      const c = document.createElement('canvas');
+      const ctx = c.getContext('2d')!;
+      ctx.font = '16px Arial';
+      const metrics = ctx.measureText('Test');
+      return {
+        hasWidth: 'width' in metrics,
+        widthIsNumber: typeof metrics.width === 'number',
+        widthIsFinite: Number.isFinite(metrics.width),
+        widthPositive: metrics.width > 0,
+      };
+    });
+    expect(result.hasWidth).toBe(true);
+    expect(result.widthIsNumber).toBe(true);
+    expect(result.widthIsFinite).toBe(true);
+    expect(result.widthPositive).toBe(true);
+  });
+
+  test('measureText result has correct prototype', async ({ extensionPage }) => {
+    const result = await extensionPage.evaluate(() => {
+      const c = document.createElement('canvas');
+      const ctx = c.getContext('2d')!;
+      ctx.font = '16px Arial';
+      const metrics = ctx.measureText('Test');
+      return {
+        isTextMetrics: metrics instanceof TextMetrics,
+        protoIsTextMetrics: Object.getPrototypeOf(metrics) === TextMetrics.prototype,
+      };
+    });
+    expect(result.isTextMetrics).toBe(true);
+    expect(result.protoIsTextMetrics).toBe(true);
+  });
+
+  test('measureText result has no unexpected own properties', async ({ extensionPage }) => {
+    const result = await extensionPage.evaluate(() => {
+      const c = document.createElement('canvas');
+      const ctx = c.getContext('2d')!;
+      ctx.font = '16px Arial';
+      const metrics = ctx.measureText('Test');
+      const ownKeys = Object.getOwnPropertyNames(metrics);
+      // Standard TextMetrics properties (all on prototype, none own)
+      // Chrome puts no own properties on TextMetrics instances.
+      return { ownKeys };
+    });
+    // TextMetrics instances should have no own properties — all accessors live on the prototype
+    expect(result.ownKeys).toEqual([]);
+  });
 });

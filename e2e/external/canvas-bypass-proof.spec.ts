@@ -1179,28 +1179,34 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
 
     // SEED CONVERGENCE PROOF (rowan dispatch: seed-convergence race fix).
     // Proves that on first navigation to a real origin, the active
-    // canvasSeed matches the sessionStorage seed WITHOUT a reload.
+    // canvasSeed matches the session seed WITHOUT a reload.
     //
-    // Before the convergence fix, the content script could win the race
-    // against background pre-injection, generate a random seed, compute
-    // profile from it, and then bridge.js would correct sessionStorage
-    // to the session seed — leaving sessionStorage correct but the live
-    // profile.canvasSeed derived from the wrong seed.
-    //
-    // After the fix, background.js pre-injection calls __pg_converge__
-    // to update the live profile in place when a seed mismatch is detected.
+    // Round 6+: seed is delivered via closure-local executeScript({ func, args }).
+    // No window rendezvous. Seed verified from service worker.
+
+    // Get session seed from service worker
+    const sw = context.serviceWorkers()[0];
+    expect(sw).toBeTruthy();
+    let sessionSeedValue: number | null = null;
+    for (let i = 0; i < 30; i++) {
+      sessionSeedValue = await sw.evaluate(async () => {
+        const data = await chrome.storage.session.get(['sessionSeed']);
+        return data.sessionSeed || null;
+      });
+      if (sessionSeedValue) break;
+      await new Promise(r => setTimeout(r, 150));
+    }
+    expect(sessionSeedValue).toBeTruthy();
 
     const testUrl = getTestPageUrl();
     const tab = await context.newPage();
     await tab.goto(testUrl, { waitUntil: 'domcontentloaded' });
-    // Wait for bridge.js correction + convergence to complete.
+    // Wait for convergence to complete.
     // NO RELOAD — this is the critical difference from bb57f4a.
     await tab.waitForTimeout(2000);
 
-    const result = await tab.evaluate(() => {
-      const seedStr = sessionStorage.getItem('__pg_seed__');
-      if (!seedStr) return { error: 'no seed', allMatch: false };
-      const seed = parseInt(seedStr, 10);
+    const result = await tab.evaluate((seed: number) => {
+      if (!seed) return { error: 'no seed', allMatch: false };
 
       // Replicate mulberry32 from core.js
       function mulberry32(s: number) {
@@ -1259,7 +1265,7 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
         expectedB,
         allMatch: result.data[0] === expectedR && result.data[1] === expectedG && result.data[2] === expectedB,
       };
-    }) as any;
+    }, sessionSeedValue!) as any;
 
     await tab.close();
 
@@ -1281,20 +1287,20 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
     //     (b) the pre-noise pixel buffer is bit-exact across tabs.
     //
     //   This test satisfies both conditions:
-    //     (a) Seed convergence via __pg_converge__ — background.js pre-injection
-    //         calls the convergence function when it detects the content script
-    //         used a different seed. No reload needed.
+    //     (a) Seed delivered via closure-local executeScript({ func, args }).
+    //         Session seed verified via SW chrome.storage.session poll.
     //     (b) putImageData — sets exact known pixel values, bypassing the GPU
     //         rendering pipeline entirely. No fillRect/arc/gradient/text variance.
     //
     //   Validity requirements (rowan review of 81ef83a):
     //   - Runs on a real injected origin (local test server, not about:blank)
     //   - Proves Duppel is active (gray-fill noise detection)
-    //   - Proves same seed across tabs (sessionStorage match)
+    //   - Proves same seed across tabs (sessionSeed from SW + TDU identity)
     //   - Asserts HARD equality on noised toDataURL output
 
-    // Probe function: checks Duppel is active, extracts seed, draws
-    // geometric content, returns toDataURL for cross-tab comparison.
+    // Probe function: checks Duppel is active, draws geometric content,
+    // returns toDataURL for cross-tab comparison. Seed verification is
+    // handled at the test level via SW chrome.storage.session poll.
     // Uses putImageData to set exact known pixel values — bypasses GPU
     // rendering pipeline entirely, so any difference must come from noise.
     const probeAndDraw = `(() => {
@@ -1312,10 +1318,7 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
         }
       }
 
-      // 2. Seed extraction
-      const seed = sessionStorage.getItem('__pg_seed__') ?? null;
-
-      // 3. Canvas via putImageData (exact known pixels, no rendering variance)
+      // 2. Canvas via putImageData (exact known pixels, no rendering variance)
       const c = document.createElement('canvas');
       c.width = 200; c.height = 100;
       const ctx = c.getContext('2d');
@@ -1333,7 +1336,7 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
       ctx.putImageData(inputData, 0, 0);
       const tdu = c.toDataURL('image/png');
 
-      return { noised, seed, tdu };
+      return { noised, tdu };
     })()`;
 
     // Use the local test server — a clean HTTP page where the extension
@@ -1343,9 +1346,8 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
 
     // Wait for STATE.sessionSeed to be ready. On fresh install, restoreState()
     // and onInstalled both call createIdentity() asynchronously. If we open
-    // tabs before sessionSeed is set, pre-injection skips (STATE.sessionSeed=0)
-    // and seedObserved can't correct (guard: && STATE.sessionSeed). Poll via
-    // the service worker to ensure initialization has completed.
+    // tabs before sessionSeed is set, pre-injection skips (STATE.sessionSeed=0).
+    // Poll via the service worker to ensure initialization has completed.
     const sw = context.serviceWorkers()[0];
     expect(sw, 'service worker must be available').toBeTruthy();
     let sessionSeed: number | null = null;
@@ -1359,9 +1361,9 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
     }
     expect(sessionSeed, 'sessionSeed must be set before opening tabs').toBeTruthy();
 
-    // First-load canvas identity: no reload needed. The seed convergence
-    // mechanism (__pg_converge__) ensures the active canvasSeed matches
-    // the session seed before page scripts can observe it.
+    // First-load canvas identity: no reload needed. Closure-local seed
+    // delivery via executeScript({ func, args }) ensures the active
+    // canvasSeed matches the session seed on first injection.
     const tab1 = await context.newPage();
     await tab1.goto(testUrl, { waitUntil: 'domcontentloaded' });
     await tab1.waitForTimeout(1000); // let convergence complete
@@ -1377,19 +1379,21 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
     await tab2.close();
 
     // Diagnostic output BEFORE assertions
-    console.log(`Geometric cross-tab: tab1 noised=${result1.noised} seed=${result1.seed}`);
-    console.log(`Geometric cross-tab: tab2 noised=${result2.noised} seed=${result2.seed}`);
-    console.log(`Geometric cross-tab: seeds match=${result1.seed === result2.seed}`);
+    console.log(`Geometric cross-tab: tab1 noised=${result1.noised}`);
+    console.log(`Geometric cross-tab: tab2 noised=${result2.noised}`);
+    console.log(`Geometric cross-tab: sessionSeed=${sessionSeed}`);
     console.log(`Geometric cross-tab: TDU IDENTICAL=${result1.tdu === result2.tdu}`);
 
     // Step 1: Assert Duppel is ACTIVE on both tabs (gray-fill noise detected)
     expect(result1.noised, 'Duppel must be active on tab 1 (gray-fill noise detected)').toBe(true);
     expect(result2.noised, 'Duppel must be active on tab 2 (gray-fill noise detected)').toBe(true);
 
-    // Step 2: Assert same seed/profile across tabs
-    expect(result1.seed, 'seed must be present on tab 1').not.toBeNull();
-    expect(result2.seed, 'seed must be present on tab 2').not.toBeNull();
-    expect(result1.seed).toBe(result2.seed);
+    // Step 2: Assert session seed exists (verified via SW, not page-level extraction)
+    // Round 6: seed is closure-local via executeScript, not readable from page JS.
+    // Cross-tab identity is proven by TDU equality (Step 3) — same seed produces
+    // identical deterministic noise on identical input pixels.
+    expect(sessionSeed, 'sessionSeed must be present').not.toBeNull();
+    expect(typeof sessionSeed, 'sessionSeed must be a number').toBe('number');
 
     // Step 3: HARD ASSERTION — geometric noised output must be identical
     expect(result1.tdu, 'geometric canvas toDataURL must not be empty on tab 1').toBeTruthy();
@@ -1402,10 +1406,9 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
       status: 'pass',
       preRotation: {
         tab1_noised: String(result1.noised),
-        tab1_seed: result1.seed,
+        sessionSeed: sessionSeed,
         tab1_tdu_prefix: result1.tdu.substring(0, 80),
         tab2_noised: String(result2.noised),
-        tab2_seed: result2.seed,
         tab2_tdu_prefix: result2.tdu.substring(0, 80),
       },
       postRotation: null,
@@ -1493,18 +1496,15 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
     // FIRST parser-executed inline <script> in <head> capturing detection
     // state immediately.
     //
-    // The convergence mechanism uses addEventListener('__pgc', handler)
-    // instead of a window property. Event listeners have zero observable
-    // window properties — they are not discoverable via in, Object.keys,
-    // GOPN, typeof, getOwnPropertyDescriptor, or propertyIsEnumerable.
-    // Only the non-standard DevTools getEventListeners() (not available
-    // to page scripts) can list them.
+    // Round 6+: no convergence mechanism exists — bootstrap is injected
+    // via closure-local executeScript({ func, args }). Zero window
+    // properties, zero events, zero nonces, zero page-world channels.
     //
     // This test serves adversarial HTML via page.route() with an inline
     // <script> in <head> — the FIRST parser-executed page JavaScript,
     // running at the earliest possible timing after document_start
-    // content scripts yield. It checks every detection vector for both
-    // the old property-based hook (__pg_converge__) and any __pg* globals.
+    // content scripts yield. It checks every detection vector for any
+    // __pg* globals or seed-related window properties.
 
     const sw = context.serviceWorkers()[0];
     expect(sw).toBeTruthy();
@@ -1533,7 +1533,7 @@ test.describe('BrowserLeaks Canvas Bypass Proof @external', () => {
 // after document_start content scripts yield, before DOMContentLoaded.
 window.__adv__ = {
   timestamp: performance.now(),
-  // Old hook name: should never exist (event-based now)
+  // Legacy convergence property: should never exist (eliminated in P0)
   pgConvergeIn: '__pg_converge__' in window,
   pgConvergeTypeof: typeof window.__pg_converge__,
   pgConvergeDescriptor: JSON.stringify(
@@ -1556,12 +1556,12 @@ window.__adv__ = {
   inKeys: Object.keys(window).filter(function(n) {
     return n.indexOf('__pg') !== -1 || n.indexOf('phantom') !== -1;
   }),
-  // Can we intercept the convergence event by listening?
-  // (We add a listener for __pgc to see if it fires during our observation)
+  // Legacy convergence event: should never fire (eliminated in P0)
+  // (We add a listener for __pgc to verify it never fires)
   eventCapture: null,
 };
 
-// Set up event listener to try to intercept convergence event
+// Set up event listener to verify no legacy convergence event fires
 var capturedEvents = [];
 window.addEventListener('__pgc', function(e) {
   capturedEvents.push({ detail: e.detail, time: performance.now() });

@@ -5,7 +5,7 @@
  */
 
 export function installBiometric(ctx) {
-  const { ORIG, profile, bioSeed, spoof, disguise } = ctx;
+  const { ORIG, profile, state, spoof, disguise } = ctx;
 
   // === Behavioral biometric precision-reduction (v2 item 3) ===
   // Reduces precision of timing, coordinate, and scroll surfaces used by
@@ -80,7 +80,7 @@ export function installBiometric(ctx) {
         return real;
       }
 
-      const jitter = bioGaussian(bioSeed, BIO_SALT_TIMESTAMP, (real * 1000) >>> 0, 0.5, 1.0); // ±1ms Gaussian
+      const jitter = bioGaussian(state.bioSeed, BIO_SALT_TIMESTAMP, (real * 1000) >>> 0, 0.5, 1.0); // ±1ms Gaussian
 
       const result = real + jitter;
       _tsCache.set(this, result);
@@ -100,7 +100,7 @@ export function installBiometric(ctx) {
   Performance.prototype.now = disguise(function() {
     const real = _origPerfNow.call(this);
     const quantized = Math.round(real * 10) / 10;
-    const jitter = bioGaussian(bioSeed, BIO_SALT_PERFNOW, (quantized * 10000) >>> 0, 0.03, 0.1);
+    const jitter = bioGaussian(state.bioSeed, BIO_SALT_PERFNOW, (quantized * 10000) >>> 0, 0.03, 0.1);
     const result = quantized + jitter;
     if (result < _perfLast) return _perfLast;
     _perfLast = result;
@@ -158,8 +158,8 @@ export function installBiometric(ctx) {
 
       // Gaussian coordinate noise: sigma=0.4, bound=1.0, then round.
       // ~62% zero, ~19% +1, ~19% -1. Still ±1px max.
-      const gx = bioGaussian(bioSeed, BIO_SALT_MOUSE_X, rx | 0, 0.4, 1.0);
-      const gy = bioGaussian(bioSeed, BIO_SALT_MOUSE_Y, ry | 0, 0.4, 1.0);
+      const gx = bioGaussian(state.bioSeed, BIO_SALT_MOUSE_X, rx | 0, 0.4, 1.0);
+      const gy = bioGaussian(state.bioSeed, BIO_SALT_MOUSE_Y, ry | 0, 0.4, 1.0);
       cached = { nx: Math.round(gx), ny: Math.round(gy) };
       _mouseCache.set(event, cached);
       return cached;

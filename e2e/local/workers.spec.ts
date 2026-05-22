@@ -1,5 +1,76 @@
 import { test, expect } from '../fixtures/extension';
 
+test.describe('Worker WebGL parity', () => {
+  test('Classic Worker WebGL vendor/renderer matches main thread', async ({ extensionPage }) => {
+    const result = await extensionPage.evaluate(() => {
+      return new Promise<{ match: boolean; mainVendor: string; mainRenderer: string; workerVendor: string; workerRenderer: string }>((resolve) => {
+        // Get main-thread WebGL vendor/renderer
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl');
+        let mainVendor = 'no-webgl';
+        let mainRenderer = 'no-webgl';
+        if (gl) {
+          const ext = gl.getExtension('WEBGL_debug_renderer_info');
+          if (ext) {
+            mainVendor = gl.getParameter(ext.UNMASKED_VENDOR_WEBGL);
+            mainRenderer = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+          }
+        }
+
+        const code = `
+          self.onmessage = function() {
+            try {
+              var oc = new OffscreenCanvas(1, 1);
+              var gl = oc.getContext('webgl');
+              var vendor = 'no-webgl';
+              var renderer = 'no-webgl';
+              if (gl) {
+                var ext = gl.getExtension('WEBGL_debug_renderer_info');
+                if (ext) {
+                  vendor = gl.getParameter(ext.UNMASKED_VENDOR_WEBGL);
+                  renderer = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+                }
+              }
+              self.postMessage({ vendor: vendor, renderer: renderer });
+            } catch(e) {
+              self.postMessage({ vendor: 'error: ' + e.message, renderer: 'error' });
+            }
+          };
+        `;
+        const blob = new Blob([code], { type: 'application/javascript' });
+        const worker = new Worker(URL.createObjectURL(blob));
+
+        const timeout = setTimeout(() => {
+          worker.terminate();
+          resolve({ match: false, mainVendor, mainRenderer, workerVendor: 'timeout', workerRenderer: 'timeout' });
+        }, 5000);
+
+        worker.onmessage = (e) => {
+          clearTimeout(timeout);
+          worker.terminate();
+          resolve({
+            match: e.data.vendor === mainVendor && e.data.renderer === mainRenderer,
+            mainVendor,
+            mainRenderer,
+            workerVendor: e.data.vendor,
+            workerRenderer: e.data.renderer,
+          });
+        };
+
+        worker.onerror = (err) => {
+          clearTimeout(timeout);
+          worker.terminate();
+          resolve({ match: false, mainVendor, mainRenderer, workerVendor: 'error', workerRenderer: (err as any).message || 'unknown' });
+        };
+
+        worker.postMessage('go');
+      });
+    });
+    console.log('Worker WebGL parity:', JSON.stringify(result));
+    expect(result.match, `Main: ${result.mainVendor} / ${result.mainRenderer} — Worker: ${result.workerVendor} / ${result.workerRenderer}`).toBe(true);
+  });
+});
+
 test.describe('Worker navigator parity', () => {
   test('Classic Worker navigator matches window', async ({ extensionPage }) => {
     const result = await extensionPage.evaluate(() => {

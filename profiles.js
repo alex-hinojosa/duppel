@@ -140,7 +140,9 @@ function mulberry32(seed) {
 }
 
 function generateSessionSeed() {
-  return Date.now() ^ (Math.random() * 0xFFFFFFFF >>> 0);
+  const arr = new Uint32Array(1);
+  crypto.getRandomValues(arr);
+  return arr[0];
 }
 
 function pickFrom(arr, rng) {

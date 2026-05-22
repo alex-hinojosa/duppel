@@ -4,49 +4,17 @@ const B = typeof browser !== "undefined" ? browser : chrome;
 /**
  * Duppel — Bridge Content Script (ISOLATED world)
  *
- * Rowan pass 5 rewrite (2026-05-08):
- * - Reads seed from sessionStorage (shared with MAIN world) and syncs
- *   it to background.js via B.runtime.sendMessage.
- * - DOES NOT use chrome.storage.session (not accessible from content
- *   scripts without setAccessLevel — all previous .set()/.get() calls
- *   were silently failing, which was the root cause of the side panel
- *   identity mismatch).
+ * Round 6+ (closure-local bootstrap, 2026-05-21):
+ * - NO seed role. Seed delivery handled entirely by background.js
+ *   via executeScript({ func: bootstrapAntiFingerprint, args: [seed] }).
+ *   Zero window properties, zero sessionStorage, zero cookies for seed.
  * - Handles site override / disable by asking background.js, which
  *   sets the __pgd cookie via chrome.scripting.executeScript (CSP-safe).
- * - Only the top frame syncs the seed (iframe desync prevention).
- *
- * Item 2 note (2026-05-12): seedObserved desync no longer triggers tab
- * reload. Background silently corrects sessionStorage instead. The reload
- * was itself a fingerprinting signal (performance.navigation.type === 1).
+ * - Handles interaction-coupled chaff queue (v2 item 4).
  */
 
 (function() {
   "use strict";
-
-  // === Read seed from sessionStorage and send to background ===
-  // ISOLATED world shares sessionStorage with MAIN world, so we can
-  // read __pg_seed__ directly. No postMessage needed (lux review: the
-  // old postMessage broadcast was visible to any tracker script on the
-  // page and could be used as a tracking identifier).
-  //
-  // Sends { type: "seedObserved", seed } to background.js instead of
-  // writing to chrome.storage.session (which silently fails from
-  // content scripts without setAccessLevel).
-  function syncSeedToExtension() {
-    if (window !== window.top) return false;
-
-    try {
-      const raw = sessionStorage.getItem("__pg_seed__");
-      if (raw) {
-        const seed = parseInt(raw, 10);
-        if (seed) {
-          B.runtime.sendMessage({ type: "seedObserved", seed: seed });
-          return true;
-        }
-      }
-    } catch(e) {}
-    return false;
-  }
 
   // === Check site overrides ===
   // Asks background.js to evaluate enabled/siteOverrides state and
@@ -193,15 +161,20 @@ const B = typeof browser !== "undefined" ? browser : chrome;
     if (_domChaffApplied) return 0;
     if (!payload || !Array.isArray(payload.selectors)) return 0;
 
-    // Query all candidate selectors, collect unique matching elements
+    // Query all candidate selectors, collect unique matching elements.
+    // Use querySelectorAll, not querySelector, so repeated ad containers
+    // behind one selector can still fill maxTargets.
     var matchedEls = [];
     var seen = new Set();
     for (var s = 0; s < payload.selectors.length; s++) {
       try {
-        var el = document.querySelector(payload.selectors[s]);
-        if (el && !seen.has(el)) {
-          seen.add(el);
-          matchedEls.push(el);
+        var nodes = document.querySelectorAll(payload.selectors[s]);
+        for (var n = 0; n < nodes.length; n++) {
+          var el = nodes[n];
+          if (el && !seen.has(el)) {
+            seen.add(el);
+            matchedEls.push(el);
+          }
         }
       } catch(e) {}
     }
@@ -210,7 +183,14 @@ const B = typeof browser !== "undefined" ? browser : chrome;
     if (matchedEls.length === 0) return 0;
 
     // Sample up to maxTargets from actual matches
-    var targets = matchedEls.slice(0, payload.maxTargets || 1);
+    var maxTargets = Math.max(1, payload.maxTargets || 1);
+    for (var j = matchedEls.length - 1; j > 0; j--) {
+      var r = Math.floor(Math.random() * (j + 1));
+      var tmp = matchedEls[j];
+      matchedEls[j] = matchedEls[r];
+      matchedEls[r] = tmp;
+    }
+    var targets = matchedEls.slice(0, maxTargets);
 
     var modified = 0;
     for (var i = 0; i < targets.length; i++) {
@@ -274,18 +254,6 @@ const B = typeof browser !== "undefined" ? browser : chrome;
   });
 
   // === Initialize ===
-  // Retry seed sync: MAIN world (anti-fingerprint.js) and ISOLATED world
-  // (this script) both run at document_start. Execution order between
-  // worlds is not guaranteed. If we run before anti-fingerprint.js writes
-  // the seed to sessionStorage, the first read returns null. Retry with
-  // short delays to catch it once it appears.
-  if (!syncSeedToExtension()) {
-    let retries = 0;
-    const retrySeed = () => {
-      if (syncSeedToExtension() || ++retries >= 10) return;
-      setTimeout(retrySeed, 50);
-    };
-    setTimeout(retrySeed, 10);
-  }
+  // P0: no seed sync — seed delivery handled by background pre-injection.
   checkSiteOverride();
 })();

@@ -119,6 +119,57 @@ test.describe('DOM chaff injection (v2 item 4)', () => {
     expect(attrs!.adSlot).toBe('9876543210');
   });
 
+  test('multi-match selector: applies chaff up to maxTargets', async ({ extensionPage: page }) => {
+    // Regression: bridge.js must collect all elements matched by a selector,
+    // not only document.querySelector's first match.
+    await page.evaluate(() => {
+      for (let i = 0; i < 3; i++) {
+        const div = document.createElement('div');
+        div.className = 'multi-ad-container';
+        div.id = `multi-ad-container-${i}`;
+        div.style.cssText = 'width:300px;height:250px;';
+        document.body.appendChild(div);
+      }
+    });
+
+    const sw = page.context().serviceWorkers()[0];
+    const tabId = await sw.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      return tab?.id || null;
+    });
+
+    await sw.evaluate(async (tid: number) => {
+      await chrome.tabs.sendMessage(tid, {
+        type: "queueChaff",
+        configs: [{ url: "https://localhost:1/__pg_noop__", body: null }],
+        domChaff: {
+          selectors: ['.multi-ad-container'],
+          maxTargets: 3,
+          attributeSets: [
+            [{ key: "data-ad-slot", value: "multi-0" }],
+            [{ key: "data-ad-slot", value: "multi-1" }],
+            [{ key: "data-ad-slot", value: "multi-2" }],
+          ],
+          pixelChance: 0,
+          pixelSrc: null,
+        },
+      });
+    }, tabId);
+
+    await page.click('body');
+    await page.waitForTimeout(500);
+
+    const result = await page.evaluate(() => {
+      const slots = Array.from(document.querySelectorAll('.multi-ad-container'))
+        .map(el => el.getAttribute('data-ad-slot'))
+        .filter((slot): slot is string => Boolean(slot));
+      return { count: slots.length, slots: slots.sort() };
+    });
+
+    expect(result.count).toBe(3);
+    expect(result.slots).toEqual(['multi-0', 'multi-1', 'multi-2']);
+  });
+
   test('pixel injection: data URI img with correct properties', async ({ extensionPage: page }) => {
     // Inject a mock ad container
     await page.evaluate(() => {

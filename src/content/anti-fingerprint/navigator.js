@@ -38,10 +38,39 @@ export function installNavigator(ctx) {
     }
   });
 
-  // Network Information API — hide real connection type
+  // Network Information API — passthrough with frozen clone.
+  // Returning undefined is a bot signal on Chromium (which always exposes
+  // navigator.connection). The real object is already coarsened by the browser
+  // (effectiveType: 4 values, downlink: 25KB steps, rtt: 25ms steps) — low
+  // entropy, not worth spoofing. Freeze a snapshot so trackers can't use the
+  // change event or onchange handler as a side channel.
   try {
     if (navigator.connection) {
-      spoof(Navigator.prototype, "connection", () => undefined);
+      var _conn = navigator.connection;
+      var frozenConn = Object.create(Object.getPrototypeOf(_conn));
+      var connProps = ['effectiveType', 'downlink', 'rtt', 'saveData', 'type'];
+      for (var i = 0; i < connProps.length; i++) {
+        var p = connProps[i];
+        if (p in _conn) {
+          var val = _conn[p];
+          ORIG.defineProperty.call(Object, frozenConn, p, {
+            get: disguise(function() { return val; }, 'get ' + p, 0),
+            enumerable: true, configurable: true
+          });
+        }
+      }
+      // Kill the change event — no network condition side channel
+      ORIG.defineProperty.call(Object, frozenConn, 'onchange', {
+        get: disguise(function() { return null; }, 'get onchange', 0),
+        set: disguise(function() {}, 'set onchange', 1),
+        enumerable: true, configurable: true
+      });
+      frozenConn.addEventListener = disguise(function addEventListener() {}, 'addEventListener', 2);
+      frozenConn.removeEventListener = disguise(function removeEventListener() {}, 'removeEventListener', 2);
+      frozenConn.dispatchEvent = disguise(function dispatchEvent() { return false; }, 'dispatchEvent', 1);
+      // P1: freeze the clone so trackers can't detect mutability as a side channel.
+      try { ORIG.freeze.call(Object, frozenConn); } catch(e) {}
+      spoof(Navigator.prototype, "connection", () => frozenConn);
     }
   } catch(e) {}
 
@@ -63,22 +92,49 @@ export function installNavigator(ctx) {
     const isAppleSilicon = profile.gpu.renderer.includes("Apple M");
     const arch = isAppleSilicon ? "arm" : "x86";
 
-    const fakeUAData = {
+    // Build a NavigatorUAData-shaped object. We construct a custom prototype
+    // with the same method layout as the native one (toJSON, getHighEntropyValues)
+    // but put data accessors on the instance to avoid native internal-slot getters.
+    const highEntropyResult = {
       brands, mobile: false, platform: uaPlatform,
-      toJSON() { return { brands: this.brands, mobile: this.mobile, platform: this.platform }; },
-      getHighEntropyValues() {
-        return Promise.resolve({
-          brands, mobile: false, platform: uaPlatform,
-          platformVersion: isMac ? "15.5.0" : isLinux ? "6.8.0" : "15.0.0",
-          architecture: arch, bitness: "64", model: "",
-          uaFullVersion: `${chromeVer}.0.0.0`,
-          fullVersionList: brands.map(b => ({ brand: b.brand, version: `${b.version}.0.0.0` })),
-          wow64: false,
-        });
-      },
+      platformVersion: isMac ? "15.5.0" : isLinux ? "6.8.0" : "15.0.0",
+      architecture: arch, bitness: "64", model: "",
+      uaFullVersion: `${chromeVer}.0.0.0`,
+      fullVersionList: brands.map(b => ({ brand: b.brand, version: `${b.version}.0.0.0` })),
+      wow64: false,
     };
-    disguise(fakeUAData.getHighEntropyValues, "getHighEntropyValues");
-    disguise(fakeUAData.toJSON, "toJSON");
+
+    // Create a prototype that mirrors NavigatorUAData's method layout.
+    // brands/mobile/platform live as accessor properties on the prototype
+    // (matching Chrome's native shape), but read from our spoofed values.
+    const uadProto = Object.create(Object.prototype);
+    Object.defineProperties(uadProto, {
+      brands:   { get() { return brands; },     enumerable: true, configurable: true },
+      mobile:   { get() { return false; },      enumerable: true, configurable: true },
+      platform: { get() { return uaPlatform; }, enumerable: true, configurable: true },
+    });
+    // toJSON: arity 0 (native shape), on prototype
+    uadProto.toJSON = function toJSON() {
+      return { brands, mobile: false, platform: uaPlatform };
+    };
+    // getHighEntropyValues: arity 1 (accepts hints array, native shape), on prototype
+    uadProto.getHighEntropyValues = function getHighEntropyValues(hints) {
+      return Promise.resolve(highEntropyResult);
+    };
+    disguise(uadProto.getHighEntropyValues, "getHighEntropyValues");
+    disguise(uadProto.toJSON, "toJSON");
+
+    // Make instanceof NavigatorUAData return true for our objects
+    if (typeof NavigatorUAData !== "undefined") {
+      try {
+        Object.defineProperty(NavigatorUAData, Symbol.hasInstance, {
+          value: (obj) => obj === fakeUAData || obj instanceof uadProto.constructor,
+          configurable: true,
+        });
+      } catch(e) {}
+    }
+
+    const fakeUAData = Object.create(uadProto);
     spoof(Navigator.prototype, "userAgentData", () => fakeUAData);
   }
 

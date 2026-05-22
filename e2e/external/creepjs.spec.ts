@@ -91,6 +91,9 @@ test.describe('CreepJS @external', () => {
     });
 
     const metrics = await extractCreepJSMetrics(extensionPage);
+    // Wait for CreepJS to finish rendering the full results page.
+    // The trust score appears early but the detail table takes longer.
+    await extensionPage.waitForTimeout(10_000);
     await extensionPage.screenshot({ path: 'test-results/creepjs.png', fullPage: true });
 
     // Required: at least trust score or fingerprint hash must be present

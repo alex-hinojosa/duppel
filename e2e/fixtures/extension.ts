@@ -33,6 +33,15 @@ function ensureServer(): Promise<number> {
         res.end(JSON.stringify(req.headers));
         return;
       }
+      // Serve an HTML page with server-received headers embedded.
+      // Used by first-navigation evidence tests to capture main_frame UA
+      // as seen by the server (after DNR modification, if any).
+      if (req.url === '/echo-page') {
+        const headersJSON = JSON.stringify(req.headers).replace(/</g, '\\u003c');
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(`<!DOCTYPE html><html><head></head><body><script>window.__serverHeaders=${headersJSON};</script></body></html>`);
+        return;
+      }
       // Serve worker test scripts with correct content-type and CORS
       // (blob-wrapped module workers have opaque origin, need CORS for import())
       if (req.url?.startsWith('/worker-scripts/') && req.url.endsWith('.js')) {
@@ -110,47 +119,20 @@ export const test = base.extend<{
     await page.goto(`http://127.0.0.1:${port}/`);
     await page.waitForLoadState('domcontentloaded');
 
-    // Item 2: background.js pre-injects the session seed via
-    // chrome.tabs.onUpdated + injectImmediately. When pre-injection
-    // loses the race, seedObserved silently corrects sessionStorage.
-    // Poll for convergence before reloading to apply the correct profile.
+    // Round 6+: seed delivered via closure-local executeScript({ func, args }).
+    // No window properties, no convergence events, no sessionStorage.
+    // Wait for SW to initialize (so tabs.onUpdated handler is registered),
+    // then reload so bootstrap injection runs with the session seed.
     const sw = context.serviceWorkers()[0];
-    let sessionSeed: number | null = null;
     if (sw) {
-      // Poll for session seed — service worker may still be initializing
       for (let i = 0; i < 30; i++) {
-        sessionSeed = await sw.evaluate(async () => {
+        const sessionSeed = await sw.evaluate(async () => {
           const data = await chrome.storage.session.get(['sessionSeed']);
           return data.sessionSeed || null;
         });
         if (sessionSeed) break;
         await new Promise(r => setTimeout(r, 150));
       }
-      // Poll for page seed convergence
-      if (sessionSeed) {
-        for (let i = 0; i < 30; i++) {
-          const currentSeed = await page.evaluate(() => {
-            const raw = sessionStorage.getItem('__pg_seed__');
-            return raw ? parseInt(raw, 10) : null;
-          });
-          if (currentSeed === sessionSeed) break;
-          await new Promise(r => setTimeout(r, 100));
-        }
-        // Re-read the latest sessionSeed in case createIdentity() ran
-        // again after our initial read (DNR rule uses the latest seed).
-        const latestSeed = await sw.evaluate(async () => {
-          const data = await chrome.storage.session.get(['sessionSeed']);
-          return data.sessionSeed || null;
-        });
-        if (latestSeed) sessionSeed = latestSeed;
-        // Force-write session seed to guarantee convergence before reload.
-        await page.evaluate((s) => {
-          sessionStorage.setItem('__pg_seed__', String(s));
-        }, sessionSeed);
-      }
-    }
-    if (!sessionSeed) {
-      await page.waitForTimeout(1000);
     }
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(300);

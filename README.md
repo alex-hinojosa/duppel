@@ -33,20 +33,9 @@ Anti-fingerprinting browser extension for Chrome (Manifest V3). Spoofs browser f
 
 The extension will activate immediately on all pages.
 
-### Firefox
-
-A Firefox build is also available. Use `manifest.firefox.json` as the manifest:
-
-```
-npm install
-npm run build:firefox
-```
-
-Then load the `build/firefox/` directory as a temporary add-on in `about:debugging`.
-
 ## Build from source
 
-The main content script (`anti-fingerprint.js`) is bundled from modular source files in `src/content/anti-fingerprint/`. To rebuild after making changes:
+The anti-fingerprint bootstrap function is bundled from modular source files in `src/content/anti-fingerprint/`. To rebuild after making changes:
 
 ```
 npm install
