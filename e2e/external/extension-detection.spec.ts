@@ -66,9 +66,10 @@ test.describe('Extension Detection Surface @external', () => {
       results.pgSeed = sessionStorage.getItem('__pg_seed__') !== null;
       results.pgSeedValue = sessionStorage.getItem('__pg_seed__');
 
-      // Check for any duppel/phantomgrid strings in DOM
+      // Check for any Duppel or legacy extension strings in DOM
       const bodyHtml = document.documentElement.outerHTML;
-      results.phantomgridInDom = /phantomgrid|duppel|__pg_/i.test(bodyHtml);
+      const legacyProjectName = ['phantom', 'grid'].join('');
+      results.duppelNameInDom = new RegExp(`${legacyProjectName}|duppel|__pg_`, 'i').test(bodyHtml);
 
       // Check for injected script elements with extension URLs
       const scripts = Array.from(document.querySelectorAll('script'));
@@ -101,7 +102,7 @@ test.describe('Extension Detection Surface @external', () => {
         pgdCookiePresent: artifacts.pgdCookie as boolean,
         pgSeedPresent: artifacts.pgSeed as boolean,
         pgSeedValue: artifacts.pgSeedValue as string | null,
-        phantomgridInDom: artifacts.phantomgridInDom as boolean,
+        duppelNameInDom: artifacts.duppelNameInDom as boolean,
         extensionScriptsVisible: (artifacts.extensionScripts as string[]).length,
         extensionStylesVisible: artifacts.extensionStyles as number,
       },

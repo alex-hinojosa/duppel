@@ -2,6 +2,22 @@
 
 Anti-fingerprinting browser extension for Chrome (Manifest V3). Spoofs browser fingerprint surfaces, strips tracking parameters, poisons tracker data collection, and rotates identity on a schedule — all without breaking normal browsing.
 
+## Release status
+
+**Current release:** v0.1.1
+
+**Verified release commit:** `73bde1f3f95f8e4a19210aff772e3c05415f8695`
+
+**Release artifact:** `duppel-v0.1.1.zip`
+
+**Artifact SHA256:** `05d884ccff2011e217df07beaaff5eb5e108abf35ea3f0e978c4823d78085ab5`
+
+v0.1.1 introduces strict-next-nav coherence. The first document navigation stays native, then Duppel applies the spoofed persona on the next navigation. This prevents first-contact split-brain between native browser/TLS signals and extension-controlled JavaScript or HTTP identity surfaces.
+
+## Compatibility model
+
+Duppel is a tracking-pollution and fingerprint-resilience tool, not a bot-detection bypass product. Some high-posture Cloudflare Enterprise sites may challenge the spoofed persona even when it is internally coherent. If a site blocks persona mode, enable **Native-Compatible Mode** in the Duppel panel for that site. Native-Compatible Mode restores native browser identity behavior and was verified during the v0.1.1 smoke matrix for OpenAI and B&H Photo.
+
 ## What it does
 
 **Fingerprint spoofing** — Generates a consistent, realistic browser identity per session. Spoofs navigator properties, screen dimensions, WebGL parameters, canvas output, audio context, timezone, client hints, and more. All surfaces are correlated (a macOS identity won't claim to be running Windows).
