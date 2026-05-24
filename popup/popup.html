@@ -83,6 +83,13 @@
         Enabled on <span id="currentSite">this site</span>
       </label>
     </section>
+
+    <section class="native-compat">
+      <label title="Native-compatible mode disables all spoofing for this site. Use for sites that break with fingerprint protection (e.g., Cloudflare challenges, banking logins). Persists across restarts.">
+        <input type="checkbox" id="nativeCompatToggle">
+        Native-compatible: <span id="nativeCompatSite" class="mono">—</span>
+      </label>
+    </section>
   </div>
 
   <dialog id="perTabWarning">

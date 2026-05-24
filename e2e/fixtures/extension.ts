@@ -20,6 +20,7 @@ const EXTENSION_PATH = path.resolve(__dirname, '..', '..');
 
 // Minimal test page served over HTTP (content scripts need http(s):// URLs)
 const TEST_PAGE_HTML = fs.readFileSync(path.resolve(__dirname, 'test-page.html'), 'utf-8');
+const HARNESS_PAGE_HTML = fs.readFileSync(path.resolve(__dirname, 'harness-page.html'), 'utf-8');
 
 let _server: http.Server | null = null;
 let _serverPort = 0;
@@ -28,6 +29,24 @@ function ensureServer(): Promise<number> {
   if (_server && _serverPort) return Promise.resolve(_serverPort);
   return new Promise((resolve) => {
     _server = http.createServer((req, res) => {
+      // Phase B measurement harness endpoints
+      if (req.url === '/harness') {
+        const mainFrameUA = req.headers['user-agent'] || '';
+        const headersJSON = JSON.stringify(req.headers).replace(/</g, '\\u003c');
+        // Serve harness page with server-observed HTTP UA embedded
+        const page = HARNESS_PAGE_HTML.replace(
+          '<title>Phase B Measurement Harness</title>',
+          `<title>Phase B Measurement Harness</title>\n<script>window.__httpUA="${mainFrameUA.replace(/"/g, '\\"')}";</script>`
+        );
+        res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
+        res.end(page);
+        return;
+      }
+      if (req.url === '/harness-echo') {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(req.headers));
+        return;
+      }
       if (req.url === '/echo-headers') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(req.headers));
@@ -105,7 +124,24 @@ export const test = base.extend<{
     });
 
     // Wait for extension service worker to register
-    await waitForServiceWorker(context);
+    const sw = await waitForServiceWorker(context);
+
+    // v0.1.1 R1: strictFirstDoc defaults to true in production.
+    // Local tests need spoofing on first meaningful navigation → disable strict mode.
+    const extensionId = sw.url().split('/')[2];
+    const disablePage = await context.newPage();
+    await disablePage.goto(`chrome-extension://${extensionId}/popup/popup.html`);
+    await disablePage.waitForLoadState('domcontentloaded');
+    await disablePage.evaluate(async () => {
+      const B = (globalThis as any).browser || chrome;
+      await new Promise<void>((resolve) => {
+        B.runtime.sendMessage(
+          { type: 'setStrictFirstDoc', enabled: false },
+          () => resolve(),
+        );
+      });
+    });
+    await disablePage.close();
 
     await use(context);
     await context.close();
@@ -154,4 +190,39 @@ export { expect } from '@playwright/test';
 // Export test page URL helper for rotation tests that need to open new pages
 export function getTestPageUrl() {
   return `http://127.0.0.1:${_serverPort}/`;
+}
+
+/**
+ * Set native-compatible mode for a hostname via extension popup page.
+ * chrome.runtime.sendMessage can't be called from the SW to itself, and
+ * const STATE isn't accessible via globalThis from sw.evaluate.
+ * Extension pages (popup) have full chrome.runtime access.
+ * Used by Phase B native-compatible test block (C6).
+ */
+export async function setNativeCompat(
+  context: BrowserContext,
+  hostname: string,
+  enabled: boolean,
+) {
+  const sw = context.serviceWorkers()[0];
+  if (!sw) throw new Error('Service worker not found — cannot set native-compat');
+  const extensionId = sw.url().split('/')[2];
+  const setupPage = await context.newPage();
+  await setupPage.goto(`chrome-extension://${extensionId}/popup/popup.html`);
+  await setupPage.waitForLoadState('domcontentloaded');
+  await setupPage.evaluate(
+    async (args: { hostname: string; enabled: boolean }) => {
+      const B = (globalThis as any).browser || chrome;
+      await new Promise<void>((resolve) => {
+        B.runtime.sendMessage(
+          { type: 'setNativeCompat', hostname: args.hostname, enabled: args.enabled },
+          () => resolve(),
+        );
+      });
+    },
+    { hostname, enabled },
+  );
+  await setupPage.close();
+  // Wait for storage + DNR update to settle
+  await new Promise(r => setTimeout(r, 500));
 }

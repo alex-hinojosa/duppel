@@ -78,10 +78,19 @@ export function createContext(sessionSeed) {
   const _realUA = navigator.userAgent;
   const _isFirefox = /Firefox\//.test(_realUA);
 
+  // Host OS detection (v0.1.1 C3 — persona-family filter, Spec Section 2.3).
+  // Parse the REAL UA string (captured above, before any spoofing).
+  // MAIN world cannot use navigator.userAgentData reliably after spoofing.
+  let _hostOS = "windows"; // fail-safe default
+  if (/Windows/.test(_realUA)) _hostOS = "windows";
+  else if (/Macintosh|Mac OS X/.test(_realUA)) _hostOS = "macos";
+  else if (/Linux|CrOS/.test(_realUA)) _hostOS = "linux";
+
   // === Plausible profile combos (correlated GPU/UA groups) ===
   const UA_GROUPS = [
     {
       engine: "chromium",
+      os: "windows",
       uas: [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
@@ -100,6 +109,7 @@ export function createContext(sessionSeed) {
     },
     {
       engine: "chromium",
+      os: "macos",
       uas: [
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
@@ -113,6 +123,7 @@ export function createContext(sessionSeed) {
     },
     {
       engine: "firefox",
+      os: "windows",
       uas: [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:139.0) Gecko/20100101 Firefox/139.0",
@@ -128,6 +139,7 @@ export function createContext(sessionSeed) {
     },
     {
       engine: "firefox",
+      os: "macos",
       uas: [
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:140.0) Gecko/20100101 Firefox/140.0",
       ],
@@ -140,6 +152,7 @@ export function createContext(sessionSeed) {
     },
     {
       engine: "chromium",
+      os: "windows",
       uas: [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0",
       ],
@@ -153,6 +166,7 @@ export function createContext(sessionSeed) {
     },
     {
       engine: "chromium",
+      os: "linux",
       uas: [
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
       ],
@@ -203,16 +217,17 @@ export function createContext(sessionSeed) {
     return arr[Math.floor(rng() * arr.length)];
   }
 
-  // Filter UA_GROUPS to same-engine profiles (v3 item 4a).
-  // Chromium hosts get chromium profiles (Chrome + Edge + Linux Chrome).
-  // Firefox hosts get firefox profiles only. Prevents TLS/rendering
-  // contradiction fingerprints.
+  // Engine + OS filtered pool (v0.1.1 C3 — Spec Section 2.3).
+  // Prevents cross-family personas (e.g., Linux persona on Windows host).
+  // Mirrors profiles.js UA_GROUPS_FILTERED exactly.
   const _hostEngine = _isFirefox ? "firefox" : "chromium";
-  const UA_GROUPS_FILTERED = UA_GROUPS.filter(g => g.engine === _hostEngine);
+  const UA_GROUPS_FILTERED = UA_GROUPS.filter(g => g.engine === _hostEngine && g.os === _hostOS);
 
+  // Returns null if no groups match (fail-closed per Spec Section 2.3).
   function generateProfile(seed) {
+    if (UA_GROUPS_FILTERED.length === 0) return null;
     const rng = mulberry32(seed);
-    const group = pickFrom(UA_GROUPS_FILTERED.length > 0 ? UA_GROUPS_FILTERED : UA_GROUPS, rng);
+    const group = pickFrom(UA_GROUPS_FILTERED, rng);
     const ua = pickFrom(group.uas, rng);
     const gpu = pickFrom(group.gpus, rng);
     return {
@@ -262,6 +277,7 @@ export function createContext(sessionSeed) {
   // via chrome.scripting.executeScript({ func, args }). createContext
   // receives the validated seed. No window interaction here.
   const profile = generateProfile(sessionSeed);
+  if (!profile) return null; // Fail-closed: no matching persona family (C3)
 
   // Mutable state — exposed via ctx.state so closures in installMisc/
   // installBiometric read current values at call time, not stale

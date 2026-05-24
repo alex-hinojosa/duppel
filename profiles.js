@@ -13,10 +13,28 @@
 const _hostEngine = (typeof navigator !== "undefined" && /Firefox\//.test(navigator.userAgent))
   ? "firefox" : "chromium";
 
+// Host OS detection (v0.1.1 C3 — persona-family filter, Spec Section 2.3).
+// In a service worker, navigator.userAgentData.platform is preferred (Chrome 90+).
+// Fallback to navigator.platform regex for older environments.
+let _hostOS = "windows"; // fail-safe default matches most common deployment
+if (typeof navigator !== "undefined") {
+  if (navigator.userAgentData && navigator.userAgentData.platform) {
+    const p = navigator.userAgentData.platform.toLowerCase();
+    if (p === "windows") _hostOS = "windows";
+    else if (p === "macos") _hostOS = "macos";
+    else if (p === "linux" || p === "chromeos") _hostOS = "linux";
+  } else if (navigator.platform) {
+    if (/Win/.test(navigator.platform)) _hostOS = "windows";
+    else if (/Mac/.test(navigator.platform)) _hostOS = "macos";
+    else if (/Linux|CrOS/.test(navigator.platform)) _hostOS = "linux";
+  }
+}
+
 const UA_GROUPS = [
   {
     // Chrome on Windows
     engine: "chromium",
+    os: "windows",
     uas: [
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
@@ -36,6 +54,7 @@ const UA_GROUPS = [
   {
     // Chrome on macOS
     engine: "chromium",
+    os: "macos",
     uas: [
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
@@ -50,6 +69,7 @@ const UA_GROUPS = [
   {
     // Firefox on Windows
     engine: "firefox",
+    os: "windows",
     uas: [
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0",
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:139.0) Gecko/20100101 Firefox/139.0",
@@ -66,6 +86,7 @@ const UA_GROUPS = [
   {
     // Firefox on macOS
     engine: "firefox",
+    os: "macos",
     uas: [
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:140.0) Gecko/20100101 Firefox/140.0",
     ],
@@ -79,6 +100,7 @@ const UA_GROUPS = [
   {
     // Edge on Windows
     engine: "chromium",
+    os: "windows",
     uas: [
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0",
     ],
@@ -93,6 +115,7 @@ const UA_GROUPS = [
   {
     // Chrome on Linux
     engine: "chromium",
+    os: "linux",
     uas: [
       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
     ],
@@ -149,15 +172,18 @@ function pickFrom(arr, rng) {
   return arr[Math.floor(rng() * arr.length)];
 }
 
-// Engine-filtered pool — mirrors core.js UA_GROUPS_FILTERED.
-// Chromium hosts pick from chromium groups only; Firefox from firefox only.
-const UA_GROUPS_FILTERED = UA_GROUPS.filter(g => g.engine === _hostEngine);
+// Engine + OS filtered pool (v0.1.1 C3 — Spec Section 2.3).
+// Prevents cross-family personas (e.g., Linux persona on Windows host).
+// Mirrors core.js UA_GROUPS_FILTERED exactly.
+const UA_GROUPS_FILTERED = UA_GROUPS.filter(g => g.engine === _hostEngine && g.os === _hostOS);
 
 // generateProfile — MUST match anti-fingerprint.js exactly.
 // Same seed → same PRNG sequence → same picks → same profile.
+// Returns null if no groups match (fail-closed per Spec Section 2.3).
 function generateProfile(seed) {
+  if (UA_GROUPS_FILTERED.length === 0) return null;
   const rng = mulberry32(seed);
-  const group = pickFrom(UA_GROUPS_FILTERED.length > 0 ? UA_GROUPS_FILTERED : UA_GROUPS, rng);
+  const group = pickFrom(UA_GROUPS_FILTERED, rng);
   const ua = pickFrom(group.uas, rng);
   const gpu = pickFrom(group.gpus, rng);
   return {

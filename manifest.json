@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "minimum_chrome_version": "120",
   "name": "Duppel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Anti-tracking fingerprint spoofing, cookie containering, and tracker data poisoning.",
   "permissions": [
     "declarativeNetRequest",

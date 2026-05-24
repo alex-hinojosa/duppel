@@ -71,7 +71,19 @@ const STATE = {
     fakeBeaconsFired: 0,
     identityRotations: 0,
   },
+  // v0.1.1 C4: native-compatible sites (Spec Section 3).
+  // Persisted in chrome.storage.local. Key = eTLD+1, value = true.
+  nativeCompatSites: {},
+  // v0.1.1 D3a: strict first-document mode.
+  // When enabled, the first navigation for a tab stays entirely native
+  // (no bootstrap, no DNR). On the second navigation, DNR is pre-activated
+  // before the HTTP request and bootstrap runs normally.
+  strictFirstDoc: true,
 };
+
+// v0.1.1 D3a: tabs that have completed their first navigation in strict mode.
+// Armed tabs get DNR pre-activated in onBeforeNavigate for their next nav.
+const armedTabs = new Set();
 
 // === Side Panel — open on extension icon click ===
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
@@ -93,8 +105,40 @@ async function applyWebRTCPolicy() {
 }
 applyWebRTCPolicy();
 
+// === Native-Compatible Mode (v0.1.1 C4, Spec Section 3) ===
+// eTLD+1 derivation with minimal embedded public suffix list.
+// Covers common multi-part TLDs. Falls back to last-two-label split.
+const MULTI_PART_SUFFIXES = new Set([
+  "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "org.au",
+  "co.nz", "co.jp", "or.jp", "co.kr", "co.in", "co.za",
+  "com.br", "org.br", "com.mx", "com.cn", "com.tw", "com.hk",
+  "github.io", "herokuapp.com", "pages.dev", "workers.dev",
+  "netlify.app", "vercel.app", "web.app", "firebaseapp.com",
+  "cloudfront.net", "azurewebsites.net", "blob.core.windows.net",
+  "co.id", "com.sg", "com.my", "co.th", "com.ar", "com.co",
+]);
+
+function getETLD1(hostname) {
+  const parts = hostname.split(".");
+  if (parts.length <= 2) return hostname;
+  const lastTwo = parts.slice(-2).join(".");
+  if (MULTI_PART_SUFFIXES.has(lastTwo)) {
+    return parts.length <= 3 ? hostname : parts.slice(-3).join(".");
+  }
+  return lastTwo;
+}
+
+function isNativeCompatible(url) {
+  try {
+    const hostname = new URL(url).hostname;
+    return !!STATE.nativeCompatSites[getETLD1(hostname)];
+  } catch(e) {
+    return false;
+  }
+}
+
 // === Initialization ===
-chrome.runtime.onInstalled.addListener(async () => {
+chrome.runtime.onInstalled.addListener(async (details) => {
   // WebRTC policy — also applied at top-level, but re-apply on install
   // to ensure the setting takes effect even if the initial top-level
   // call raced with permission grant.
@@ -113,6 +157,19 @@ chrome.runtime.onInstalled.addListener(async () => {
     chaosLevel: "balanced",
     identityMode: "session",
   });
+
+  // Legacy __pg_s cookie cleanup (Spec Section 4.4, v0.1.1 C5).
+  // __pg_s was the seed-transport cookie eliminated in Round 6.
+  // On extension update, remove any stale __pg_s cookies from all domains.
+  if (details.reason === "update") {
+    try {
+      const pgsCookies = await chrome.cookies.getAll({ name: "__pg_s" });
+      for (const cookie of pgsCookies) {
+        const url = `http${cookie.secure ? "s" : ""}://${cookie.domain.replace(/^\./, "")}${cookie.path}`;
+        await chrome.cookies.remove({ url, name: "__pg_s" });
+      }
+    } catch(e) {}
+  }
 
   // Set up periodic alarms
   // Session mode: 24h rotation (realistic browser session cadence)
@@ -134,7 +191,9 @@ function restoreState() {
   return _restorePromise;
 }
 async function _doRestore() {
-  const data = await chrome.storage.local.get(["stats", "chaosLevel", "identityMode"]);
+  const data = await chrome.storage.local.get(["stats", "chaosLevel", "identityMode", "nativeCompatSites"]);
+  // v0.1.1 C4: restore native-compatible sites
+  if (data.nativeCompatSites) STATE.nativeCompatSites = data.nativeCompatSites;
   if (data.stats) Object.assign(STATE.stats, data.stats);
   if (data.chaosLevel) STATE.chaosLevel = data.chaosLevel;
   if (data.identityMode) STATE.identityMode = data.identityMode;
@@ -251,55 +310,96 @@ restoreState();
 // Idempotence (P0-4): tracked extension-side via tabId:url.
 // No window flags (__pg_bootstrapped__ etc.) — nothing page-observable.
 
-// Round 10: revoke DNR eligibility before navigation starts (fail-closed).
-// onBeforeNavigate fires before the main_frame request, giving
-// updateTabScopedDNR() time to remove the tab from the session rule.
-// If the DNR update wins the race, the main_frame request has native UA.
-// If the request wins, it inherits the stale session rule's spoofed UA.
-// This race is sub-millisecond and documented per rowan Gate 3.
-chrome.webNavigation.onBeforeNavigate.addListener((details) => {
+// v0.1.1 C2: revoke DNR eligibility before navigation starts (fail-closed).
+// onBeforeNavigate fires before the main_frame request. Await the DNR
+// update so the rule is cleared before the main-frame request goes out.
+// Eliminates the race where stale DNR spoofs a new navigation.
+chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
   if (details.frameId !== 0) return;
+
+  // v0.1.1 D3a: strict mode — armed tab has STRICT_ARM_RULE_ID active
+  // (main_frame only, installed at end of nav 1). Don't interfere — the
+  // main-frame rule will spoof this navigation's HTTP request.
+  if (STATE.strictFirstDoc && armedTabs.has(details.tabId)) {
+    return; // STRICT_ARM_RULE already covers this tab's main_frame requests
+  }
+
   if (STATE.bootstrappedTabs.has(details.tabId)) {
     STATE.bootstrappedTabs.delete(details.tabId);
-    updateTabScopedDNR(); // async, fire-and-forget
+    await updateTabScopedDNR();
   }
 });
 
-// Clear stale docKeys when a new document commits in a tab.
+// v0.1.1 C1: Full bootstrap injection via webNavigation.onCommitted.
+// onCommitted fires AFTER the new document has committed — the new JS
+// context is established. executeScript with injectImmediately: true will
+// target the correct (new) context. This fixes the split-brain where
+// tabs.onUpdated injection ran in the dying old context.
+//
+// Chrome navigation lifecycle:
+// 1. onBeforeNavigate → old doc active, DNR revoked (awaited)
+// 2. HTTP request goes out (native UA — DNR was cleared)
+// 3. Response arrives, browser commits navigation
+// 4. onCommitted → new JS context ready, executeScript targets it
+// 5. .then() → bootstrappedTabs.add → updateTabScopedDNR
+//    (next navigation will have coherent HTTP+JS)
 chrome.webNavigation.onCommitted.addListener((details) => {
   if (details.frameId !== 0) return;
-  for (const key of STATE.bootstrappedDocs) {
-    if (key.startsWith(`${details.tabId}:`)) STATE.bootstrappedDocs.delete(key);
-  }
-});
 
-// Full bootstrap injection via tabs.onUpdated.
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status !== "loading") return;
+  const tabId = details.tabId;
+  const url = details.url;
 
-  // Round 10: revoke DNR eligibility on any navigation/reload. The old
-  // document's JS context is destroyed; proof must be re-earned. This
-  // fires even for non-injectable URLs (chrome://, disabled, etc.)
-  // because the prior document's bootstrap is gone regardless.
-  // Belt-and-suspenders with onBeforeNavigate (which fires earlier).
-  if (STATE.bootstrappedTabs.has(tabId)) {
-    STATE.bootstrappedTabs.delete(tabId);
-    updateTabScopedDNR(); // async, fire-and-forget
-  }
-
-  if (!STATE.sessionSeed || !STATE.enabled) return;
-  if (!tab.url || tab.url === "about:blank" || tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://")) return;
-
-  // A "loading" status means a new navigation or reload — the old document's
-  // bootstrap is gone (new JS execution context). Clear stale docKeys for
-  // this tab before the idempotence check. This is critical because
-  // tabs.onUpdated fires BEFORE webNavigation.onCommitted, so the old
-  // docKey would still be present without this cleanup.
+  // Clear stale docKeys for this tab
   for (const key of STATE.bootstrappedDocs) {
     if (key.startsWith(`${tabId}:`)) STATE.bootstrappedDocs.delete(key);
   }
 
-  const docKey = `${tabId}:${tab.url}`;
+  // Belt-and-suspenders: revoke DNR proof (also done in onBeforeNavigate)
+  // v0.1.1 D3a: skip for armed tabs — DNR must persist through nav 2
+  if (STATE.bootstrappedTabs.has(tabId) && !(STATE.strictFirstDoc && armedTabs.has(tabId))) {
+    STATE.bootstrappedTabs.delete(tabId);
+    updateTabScopedDNR();
+  }
+
+  if (!STATE.sessionSeed || !STATE.enabled) return;
+  if (!url || url === "about:blank" || url.startsWith("chrome://") || url.startsWith("chrome-extension://")) return;
+
+  // C4: skip injection for native-compatible sites
+  if (isNativeCompatible(url)) return;
+
+  // v0.1.1 D3a: strict mode — first navigation stays all-native.
+  // Skip executeScript but install a main_frame-ONLY DNR rule so the
+  // NEXT navigation's HTTP goes out with persona UA. Using main_frame-only
+  // prevents this document's fetch/XHR from being spoofed.
+  if (STATE.strictFirstDoc && !armedTabs.has(tabId)) {
+    armedTabs.add(tabId);
+    const ua = STATE.sessionSeed ? generateProfile(STATE.sessionSeed)?.userAgent : null;
+    if (ua) {
+      try {
+        chrome.declarativeNetRequest.updateSessionRules({
+          removeRuleIds: [STRICT_ARM_RULE_ID],
+          addRules: [{
+            id: STRICT_ARM_RULE_ID,
+            priority: 3,
+            action: {
+              type: "modifyHeaders",
+              requestHeaders: [
+                { header: "User-Agent", operation: "set", value: ua },
+              ],
+            },
+            condition: {
+              urlFilter: "*",
+              tabIds: [tabId],
+              resourceTypes: ["main_frame"],
+            },
+          }],
+        });
+      } catch(e) {}
+    }
+    return; // Entire first document stays native (JS + fetch) — main_frame rule arms next nav
+  }
+
+  const docKey = `${tabId}:${url}`;
   if (STATE.bootstrappedDocs.has(docKey)) return;
 
   let seedToInject;
@@ -333,6 +433,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }).then(() => {
     STATE.bootstrappedDocs.add(docKey);
     STATE.bootstrappedTabs.add(tabId);
+    armedTabs.delete(tabId); // v0.1.1 D3a: strict arming served its purpose — resume normal DNR lifecycle
     updateTabScopedDNR();
   }).catch(() => {
     // Injection failed (non-injectable page, restricted URL, etc.).
@@ -343,6 +444,20 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     persistTabSeeds();
     updateTabScopedDNR();
   });
+});
+
+// Belt-and-suspenders: revoke DNR on tabs.onUpdated status="loading".
+// Primary injection is now in onCommitted above. This handler only
+// ensures DNR proof is cleared early for edge cases where onBeforeNavigate
+// didn't fire (e.g., same-document navigations that Chrome treats as loads).
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status !== "loading") return;
+  // v0.1.1 D3a: don't clear pre-activated DNR for armed tabs in strict mode
+  if (STATE.strictFirstDoc && armedTabs.has(tabId)) return;
+  if (STATE.bootstrappedTabs.has(tabId)) {
+    STATE.bootstrappedTabs.delete(tabId);
+    updateTabScopedDNR();
+  }
 });
 
 // === Dynamic User-Agent Header Rule (per-tab mode only) ===
@@ -399,6 +514,9 @@ async function removeGlobalUAHeaderRule() {
 // expert-only, de-scoped from v0.1.0 strict proof claim, and the UA
 // mismatch on non-bootstrapped tabs is an accepted trade-off.
 const SESSION_UA_RULE_ID = 9998;
+// v0.1.1 D3a: strict mode arming rule — main_frame only, separate from session rule.
+// Prevents the first document's fetches from being spoofed while arming DNR for nav 2.
+const STRICT_ARM_RULE_ID = 9997;
 
 async function updateTabScopedDNR() {
   // Round 8: defensively remove the global per-tab dynamic rule when in
@@ -419,10 +537,10 @@ async function updateTabScopedDNR() {
   }
 
   if (tabIds.length === 0 || !ua) {
-    // No bootstrapped tabs or no profile — remove the session rule entirely
+    // No bootstrapped tabs or no profile — remove session rule AND any stale arming rule
     try {
       await chrome.declarativeNetRequest.updateSessionRules({
-        removeRuleIds: [SESSION_UA_RULE_ID],
+        removeRuleIds: [SESSION_UA_RULE_ID, STRICT_ARM_RULE_ID],
       });
     } catch(e) {}
     return;
@@ -430,7 +548,7 @@ async function updateTabScopedDNR() {
 
   try {
     await chrome.declarativeNetRequest.updateSessionRules({
-      removeRuleIds: [SESSION_UA_RULE_ID],
+      removeRuleIds: [SESSION_UA_RULE_ID, STRICT_ARM_RULE_ID],
       addRules: [{
         id: SESSION_UA_RULE_ID,
         priority: 3,
@@ -464,6 +582,13 @@ async function createIdentity(seed) {
   STATE.currentSeed = seed;
   STATE.sessionSeed = seed;
   const profile = generateProfile(seed);
+  if (!profile) {
+    // Fail-closed (C3): no persona groups match host engine+OS.
+    // Store seed but no profile — DNR won't spoof, JS won't override.
+    await chrome.storage.session.set({ profile: null, sessionSeed: seed });
+    await updateTabScopedDNR();
+    return { seed, profile: null };
+  }
   await chrome.storage.session.set({ profile: profile, sessionSeed: seed });
   // Item 2: persist for cold-start recovery. On next browser launch,
   // restoreState() reads lastSeed/lastUA to bootstrap the DNR rule
@@ -557,7 +682,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         try {
           const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
           if (tab && tab.id && tab.url &&
-              (tab.url.startsWith("http://") || tab.url.startsWith("https://"))) {
+              (tab.url.startsWith("http://") || tab.url.startsWith("https://")) &&
+              !isNativeCompatible(tab.url)) {
             // Send configs to bridge.js — it queues and fires on interaction.
             // Stats NOT incremented here; bridge.js sends chaffFired when done.
             // DOM chaff payload rides alongside network configs in the same
@@ -786,6 +912,73 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       })();
       return true;
 
+    // v0.1.1 D3a: strict first-document mode toggle
+    case "setStrictFirstDoc":
+      STATE.strictFirstDoc = !!msg.enabled;
+      armedTabs.clear();
+      // Remove any stale arming rule when toggling strict mode off
+      if (!msg.enabled) {
+        chrome.declarativeNetRequest.updateSessionRules({
+          removeRuleIds: [STRICT_ARM_RULE_ID],
+        }).catch(() => {});
+      }
+      callback({ ok: true, strictFirstDoc: STATE.strictFirstDoc });
+      break;
+
+    // v0.1.1 C4: native-compatible mode toggle (Spec Section 3)
+    case "setNativeCompat":
+      (async () => {
+        const hostname = msg.hostname;
+        const etld1 = getETLD1(hostname);
+        if (msg.enabled) {
+          STATE.nativeCompatSites[etld1] = true;
+        } else {
+          delete STATE.nativeCompatSites[etld1];
+        }
+        await chrome.storage.local.set({ nativeCompatSites: STATE.nativeCompatSites });
+        // Clear DNR proof for tabs on this site
+        const tabs = await chrome.tabs.query({});
+        for (const tab of tabs) {
+          if (tab.url) {
+            try {
+              if (getETLD1(new URL(tab.url).hostname) === etld1) {
+                STATE.bootstrappedTabs.delete(tab.id);
+                armedTabs.delete(tab.id); // v0.1.1 R2: clear stale arming for native-compat tabs
+                delete STATE.tabSeeds[tab.id];
+                for (const key of STATE.bootstrappedDocs) {
+                  if (key.startsWith(`${tab.id}:`)) STATE.bootstrappedDocs.delete(key);
+                }
+              }
+            } catch(e) {}
+          }
+        }
+        await persistTabSeeds();
+        await updateTabScopedDNR();
+        notifyOverrideChanged();
+        sendResponse({ ok: true });
+        // Reload affected tabs
+        setTimeout(async () => {
+          for (const tab of tabs) {
+            if (tab.url) {
+              try {
+                if (getETLD1(new URL(tab.url).hostname) === etld1) {
+                  await chrome.tabs.reload(tab.id);
+                }
+              } catch(e) {}
+            }
+          }
+        }, 300);
+      })();
+      return true;
+
+    case "getNativeCompat":
+      (async () => {
+        const hostname = msg.hostname;
+        const etld1 = getETLD1(hostname);
+        sendResponse({ enabled: !!STATE.nativeCompatSites[etld1], etld1 });
+      })();
+      return true;
+
     case "cleanCookiesNow":
       cleanThirdPartyCookies().then(count => {
         sendResponse({ ok: true, cleaned: count });
@@ -843,7 +1036,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           try {
             const data = await chrome.storage.session.get(["enabled", "siteOverrides"]);
             const overrides = data.siteOverrides || {};
-            const shouldDisable = overrides[msg.hostname] === false || data.enabled === false;
+            const shouldDisable = overrides[msg.hostname] === false || data.enabled === false
+              || isNativeCompatible("https://" + msg.hostname);
             chrome.scripting.executeScript({
               target: { tabId: sender.tab.id },
               world: "MAIN",
@@ -866,6 +1060,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   delete STATE.tabSeeds[tabId];
   STATE.bootstrappedTabs.delete(tabId);
+  armedTabs.delete(tabId); // v0.1.1 D3a
   for (const key of STATE.bootstrappedDocs) {
     if (key.startsWith(`${tabId}:`)) STATE.bootstrappedDocs.delete(key);
   }

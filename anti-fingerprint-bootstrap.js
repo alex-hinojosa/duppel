@@ -57,9 +57,14 @@ function bootstrapAntiFingerprint(seed) {
     }
     const _realUA = navigator.userAgent;
     const _isFirefox = /Firefox\//.test(_realUA);
+    let _hostOS = "windows";
+    if (/Windows/.test(_realUA)) _hostOS = "windows";
+    else if (/Macintosh|Mac OS X/.test(_realUA)) _hostOS = "macos";
+    else if (/Linux|CrOS/.test(_realUA)) _hostOS = "linux";
     const UA_GROUPS = [
       {
         engine: "chromium",
+        os: "windows",
         uas: [
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
@@ -78,6 +83,7 @@ function bootstrapAntiFingerprint(seed) {
       },
       {
         engine: "chromium",
+        os: "macos",
         uas: [
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
@@ -91,6 +97,7 @@ function bootstrapAntiFingerprint(seed) {
       },
       {
         engine: "firefox",
+        os: "windows",
         uas: [
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0",
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:139.0) Gecko/20100101 Firefox/139.0"
@@ -106,6 +113,7 @@ function bootstrapAntiFingerprint(seed) {
       },
       {
         engine: "firefox",
+        os: "macos",
         uas: [
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:140.0) Gecko/20100101 Firefox/140.0"
         ],
@@ -118,6 +126,7 @@ function bootstrapAntiFingerprint(seed) {
       },
       {
         engine: "chromium",
+        os: "windows",
         uas: [
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0"
         ],
@@ -131,6 +140,7 @@ function bootstrapAntiFingerprint(seed) {
       },
       {
         engine: "chromium",
+        os: "linux",
         uas: [
           "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
         ],
@@ -189,10 +199,11 @@ function bootstrapAntiFingerprint(seed) {
     }
     __name(pickFrom, "pickFrom");
     const _hostEngine = _isFirefox ? "firefox" : "chromium";
-    const UA_GROUPS_FILTERED = UA_GROUPS.filter((g) => g.engine === _hostEngine);
+    const UA_GROUPS_FILTERED = UA_GROUPS.filter((g) => g.engine === _hostEngine && g.os === _hostOS);
     function generateProfile(seed2) {
+      if (UA_GROUPS_FILTERED.length === 0) return null;
       const rng = mulberry32(seed2);
-      const group = pickFrom(UA_GROUPS_FILTERED.length > 0 ? UA_GROUPS_FILTERED : UA_GROUPS, rng);
+      const group = pickFrom(UA_GROUPS_FILTERED, rng);
       const ua = pickFrom(group.uas, rng);
       const gpu = pickFrom(group.gpus, rng);
       return {
@@ -243,6 +254,7 @@ function bootstrapAntiFingerprint(seed) {
     }
     __name(getTimezoneOffset, "getTimezoneOffset");
     const profile = generateProfile(sessionSeed);
+    if (!profile) return null;
     const state = {
       sessionSeed,
       bioSeed: (profile.canvasSeed ^ 1112100685) >>> 0,

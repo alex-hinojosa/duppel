@@ -22,6 +22,8 @@ const siteEnabled = document.getElementById("siteEnabled");
 const currentSite = document.getElementById("currentSite");
 const chaosBtns = document.querySelectorAll(".chaos-btn");
 const perTabMode = document.getElementById("perTabMode");
+const nativeCompatToggle = document.getElementById("nativeCompatToggle");
+const nativeCompatSite = document.getElementById("nativeCompatSite");
 
 // Update UI with current state
 function updateUI(state) {
@@ -89,6 +91,14 @@ async function init() {
   B.storage.session.get(["siteOverrides"], (data) => {
     const overrides = data.siteOverrides || {};
     siteEnabled.checked = overrides[hostname] !== false;
+  });
+
+  // v0.1.1 C4: native-compatible mode
+  B.runtime.sendMessage({ type: "getNativeCompat", hostname }, (resp) => {
+    if (resp) {
+      nativeCompatToggle.checked = resp.enabled;
+      nativeCompatSite.textContent = resp.etld1 || hostname;
+    }
   });
 }
 
@@ -204,6 +214,16 @@ siteEnabled.addEventListener("change", async () => {
     type: "setSiteOverride",
     hostname: hostname,
     enabled: siteEnabled.checked,
+  });
+});
+
+// v0.1.1 C4: native-compatible mode toggle
+nativeCompatToggle.addEventListener("change", async () => {
+  const hostname = await getCurrentHostname();
+  B.runtime.sendMessage({
+    type: "setNativeCompat",
+    hostname: hostname,
+    enabled: nativeCompatToggle.checked,
   });
 });
 

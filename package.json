@@ -16,7 +16,8 @@
     "test:report": "npx playwright show-report",
     "test:benchmark": "mkdir -p benchmark-results && npx playwright test --project=external --reporter=json > benchmark-results/benchmark-report.json",
     "test:baseline": "npx playwright test --project=baseline",
-    "test:investigate": "npx playwright test --project=external -g 'Canvas Extraction Investigation'"
+    "test:investigate": "npx playwright test --project=external -g 'Canvas Extraction Investigation'",
+    "test:phase-b": "npx playwright test --project=phase-b"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",

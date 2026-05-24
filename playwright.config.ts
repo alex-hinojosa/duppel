@@ -31,5 +31,11 @@ export default defineConfig({
       timeout: 90_000,
       retries: 2,
     },
+    {
+      name: 'phase-b',
+      testMatch: /phase-b\/.*\.spec\.ts/,
+      timeout: 60_000,
+      retries: 0,
+    },
   ],
 });

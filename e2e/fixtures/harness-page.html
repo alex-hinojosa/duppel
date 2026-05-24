@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase B Measurement Harness</title>
+<script>
+// EARLIEST JS UA — captured synchronously in <head>, before any extension
+// bootstrap can run. This is the first observable navigator.userAgent value.
+window.__earliestJsUA = navigator.userAgent;
+window.__earliestJsTimestamp = performance.now();
+window.__earliestPlatform = navigator.platform;
+
+// Timeline: records navigator.userAgent at every capture point.
+// Phase D uses this to benchmark the bootstrap arrival window.
+window.__uaTimeline = [{ t: performance.now(), label: 'inline', ua: navigator.userAgent }];
+</script>
+</head>
+<body>
+<div id="status">measuring...</div>
+<script>
+// POST-BOOTSTRAP JS UA — captured after delays to give the extension's
+// MAIN-world bootstrap time to run via executeScript from onCommitted.
+//
+// On the first navigation, executeScript often arrives before setTimeout(0).
+// On subsequent navigations, the IPC round-trip from the service worker
+// may take longer — executeScript arrives AFTER setTimeout(0). Each
+// capture overwrites previous ones (no guards), so the latest wins.
+// The 100ms capture is authoritative; the fetch triggers at that point.
+
+function capturePostBootstrap() {
+  window.__postBootstrapJsUA = navigator.userAgent;
+  window.__postBootstrapTimestamp = performance.now();
+  window.__postBootstrapPlatform = navigator.platform;
+}
+
+function recordTimeline(label) {
+  window.__uaTimeline.push({ t: performance.now(), label: label, ua: navigator.userAgent });
+}
+
+function doFetch(label) {
+  return fetch('/harness-echo', { method: 'GET', cache: 'no-store' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var ua = data['user-agent'] || null;
+      if (!window.__fetchTimeline) window.__fetchTimeline = [];
+      window.__fetchTimeline.push({ t: performance.now(), label: label, ua: ua });
+      // First fetch result populates the legacy field
+      if (!window.__fetchResponseUA) {
+        window.__fetchResponseUA = ua;
+        window.__fetchTimestamp = performance.now();
+      }
+      return ua;
+    });
+}
+
+// Capture at increasing delays — each overwrites the previous.
+// 0ms:   optimistic — bootstrap may have arrived during HTML parsing
+// 50ms:  gives bootstrap IPC time on subsequent navigations
+// 100ms: authoritative capture + triggers first fetch measurement
+// 500ms, 1000ms: Phase D transition benchmark captures
+setTimeout(function() { capturePostBootstrap(); recordTimeline('0ms'); }, 0);
+setTimeout(function() { capturePostBootstrap(); recordTimeline('50ms'); }, 50);
+setTimeout(function() {
+  capturePostBootstrap();
+  recordTimeline('100ms');
+  doFetch('fetch-100ms');
+}, 100);
+setTimeout(function() {
+  recordTimeline('500ms');
+  doFetch('fetch-500ms');
+}, 500);
+setTimeout(function() {
+  recordTimeline('1000ms');
+  doFetch('fetch-1000ms').then(function() {
+    window.__harnessDone = true;
+    document.getElementById('status').textContent = 'done';
+  }).catch(function(err) {
+    window.__fetchError = err.message;
+    window.__harnessDone = true;
+    document.getElementById('status').textContent = 'done (fetch error)';
+  });
+}, 1000);
+</script>
+</body>
+</html>
