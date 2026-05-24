@@ -14,6 +14,10 @@ Anti-fingerprinting browser extension for Chrome (Manifest V3). Spoofs browser f
 
 **Identity rotation** — Session-scoped identity with automatic 24-hour rotation. Manual rotation via the popup. Optional per-tab mode for advanced users.
 
+**Strict-next-nav coherence** — First navigation to any site uses your real browser identity for maximum compatibility. Subsequent navigations use the spoofed persona with full HTTP + JS coherence. No split-brain between network and DOM identity.
+
+**Native-compatible mode** — Per-site toggle that disables all spoofing for sites that break with fingerprint protection (e.g., Cloudflare Enterprise challenges, banking logins). Persists across restarts.
+
 **Tracker data poisoning** — Fires fake tracking beacons with plausible but false data to pollute tracker databases.
 
 ## Install
