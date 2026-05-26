@@ -37,5 +37,11 @@ export default defineConfig({
       timeout: 60_000,
       retries: 0,
     },
+    {
+      name: 'smoke',
+      testMatch: /smoke\/.*\.spec\.ts/,
+      timeout: 90_000,
+      retries: 0,
+    },
   ],
 });

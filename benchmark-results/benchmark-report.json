@@ -1,0 +1,2448 @@
+{
+  "config": {
+    "configFile": "C:\\snapdragon\\phantomgrid-repo\\playwright.config.ts",
+    "rootDir": "C:/snapdragon/phantomgrid-repo/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "C:/snapdragon/phantomgrid-repo/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "local",
+        "name": "local",
+        "testDir": "C:/snapdragon/phantomgrid-repo/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/local\\/.*\\.spec\\.ts/"
+        ],
+        "timeout": 30000
+      },
+      {
+        "outputDir": "C:/snapdragon/phantomgrid-repo/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "rotation",
+        "name": "rotation",
+        "testDir": "C:/snapdragon/phantomgrid-repo/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/rotation\\/.*\\.spec\\.ts/"
+        ],
+        "timeout": 30000
+      },
+      {
+        "outputDir": "C:/snapdragon/phantomgrid-repo/test-results",
+        "repeatEach": 1,
+        "retries": 2,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "external",
+        "name": "external",
+        "testDir": "C:/snapdragon/phantomgrid-repo/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/external\\/.*\\.spec\\.ts/"
+        ],
+        "timeout": 90000
+      },
+      {
+        "outputDir": "C:/snapdragon/phantomgrid-repo/test-results",
+        "repeatEach": 1,
+        "retries": 2,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "baseline",
+        "name": "baseline",
+        "testDir": "C:/snapdragon/phantomgrid-repo/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/baseline\\/.*\\.spec\\.ts/"
+        ],
+        "timeout": 90000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.59.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "external\\browserleaks.spec.ts",
+      "file": "external/browserleaks.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "BrowserLeaks @external",
+          "file": "external/browserleaks.spec.ts",
+          "line": 18,
+          "column": 6,
+          "specs": [
+            {
+              "title": "canvas fingerprint is spoofed and changes on rotation",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\browserleaks.spec.ts",
+                        "line": 26,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 5904,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:52:35.737Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\browserleaks.spec.ts",
+                            "line": 26,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "cb49d81409ef62e87dcc-b3e1bdca498fc4baf6e2",
+              "file": "external/browserleaks.spec.ts",
+              "line": 21,
+              "column": 7
+            },
+            {
+              "title": "WebGL shows spoofed vendor/renderer",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\browserleaks.spec.ts",
+                        "line": 103,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 5628,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:52:41.670Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\browserleaks.spec.ts",
+                            "line": 103,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "cb49d81409ef62e87dcc-0037d78f916064b25833",
+              "file": "external/browserleaks.spec.ts",
+              "line": 102,
+              "column": 7
+            },
+            {
+              "title": "navigator properties match spoofed profile",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\browserleaks.spec.ts",
+                        "line": 154,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2228,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:52:47.316Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\browserleaks.spec.ts",
+                            "line": 154,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "cb49d81409ef62e87dcc-533f0687230beae35dc1",
+              "file": "external/browserleaks.spec.ts",
+              "line": 153,
+              "column": 7
+            },
+            {
+              "title": "BrowserLeaks canvas cross-tab: text-dependent external measurement",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\browserleaks.spec.ts",
+                        "line": 216,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2301,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "BL cross-tab: tab1=e09e2e54ec215eb48bcbe2913bae0875 tab2=84409f5a66473605fa36cb0a783e5a31 match=false\n"
+                        },
+                        {
+                          "text": "NOTE: BrowserLeaks hashes differ — text rendering variance (not a PhantomGrid identity issue)\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:52:49.560Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\browserleaks.spec.ts",
+                            "line": 216,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "cb49d81409ef62e87dcc-9680da31e9a3b5299278",
+              "file": "external/browserleaks.spec.ts",
+              "line": 215,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "external\\canvas-bypass-proof.spec.ts",
+      "file": "external/canvas-bypass-proof.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "BrowserLeaks Canvas Bypass Proof @external",
+          "file": "external/canvas-bypass-proof.spec.ts",
+          "line": 22,
+          "column": 6,
+          "specs": [
+            {
+              "title": "vector 1: Worker/SharedWorker/ServiceWorker detection",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                        "line": 26,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 6589,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "=== Worker/SW Detection Results ===\n"
+                        },
+                        {
+                          "text": "Total intercepted: 0\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:52:51.924Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                            "line": 26,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "78cac09949ca3ce60e3d-b306b52e3b48226374cf",
+              "file": "external/canvas-bypass-proof.spec.ts",
+              "line": 25,
+              "column": 7
+            },
+            {
+              "title": "vector 2: saved native reference race",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                        "line": 135,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 6663,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "=== Native Reference Race Results ===\n"
+                        },
+                        {
+                          "text": "Early ref (addInitScript): function toDataURL() { [native code] }\n"
+                        },
+                        {
+                          "text": "Current ref (after load): function toDataURL() { [native code] }\n"
+                        },
+                        {
+                          "text": "Refs match: false\n"
+                        },
+                        {
+                          "text": "Early looks native: true\n"
+                        },
+                        {
+                          "text": "Current looks native: true\n"
+                        },
+                        {
+                          "text": "Patched after init: true\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:52:58.529Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                            "line": 135,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "78cac09949ca3ce60e3d-3ba354cf8a2d1f3254ce",
+              "file": "external/canvas-bypass-proof.spec.ts",
+              "line": 134,
+              "column": 7
+            },
+            {
+              "title": "vector 3: iframe prototype theft and DOM analysis",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                        "line": 220,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 6540,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "=== iframe Prototype Theft Results ===\n"
+                        },
+                        {
+                          "text": "iframes created via createElement: 0\n"
+                        },
+                        {
+                          "text": "iframes in DOM: 1\n"
+                        },
+                        {
+                          "text": "  iframe[0]: src=(empty) sandbox=allow-same-origin canvas=accessible\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:53:05.203Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                            "line": 220,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "78cac09949ca3ce60e3d-3b9b8a7dd4d8cdf11c1e",
+              "file": "external/canvas-bypass-proof.spec.ts",
+              "line": 219,
+              "column": 7
+            },
+            {
+              "title": "vector 4: JavaScript source analysis",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                        "line": 300,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 6663,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "=== JavaScript Source Analysis ===\n"
+                        },
+                        {
+                          "text": "External JS files with canvas patterns: 0\n"
+                        },
+                        {
+                          "text": "Inline/same-origin scripts with canvas patterns: 2\n"
+                        },
+                        {
+                          "text": "  https://browserleaks.com/js/default.js?v=57520745 (41231 chars): [canvas+hash]\n"
+                        },
+                        {
+                          "text": "  https://browserleaks.com/js/canvas.js?v=57520745 (20411 chars): [toDataURL, getImageData, fillText, IDAT, canvas+hash]\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:53:11.756Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                            "line": 300,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "78cac09949ca3ce60e3d-b750eec1dc146fafcf31",
+              "file": "external/canvas-bypass-proof.spec.ts",
+              "line": 299,
+              "column": 7
+            },
+            {
+              "title": "vector 5: OffscreenCanvas in Worker proof-of-concept",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                        "line": 413,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1258,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "=== OffscreenCanvas Worker PoC Results ===\n"
+                        },
+                        {
+                          "text": "Main world noised: false\n"
+                        },
+                        {
+                          "text": "Worker success: true\n"
+                        },
+                        {
+                          "text": "Pixels match (main vs worker): true\n"
+                        },
+                        {
+                          "text": "DataURLs match (main vs worker): true\n"
+                        },
+                        {
+                          "text": "Main pixels: [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]\n"
+                        },
+                        {
+                          "text": "Worker pixels: [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:53:18.432Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                            "line": 413,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "78cac09949ca3ce60e3d-a71494fc73f4b3ead910",
+              "file": "external/canvas-bypass-proof.spec.ts",
+              "line": 412,
+              "column": 7
+            },
+            {
+              "title": "vector 6: iframe contentDocument canvas bypass (BrowserLeaks confirmed path)",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                        "line": 586,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 4729,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "=== iframe contentDocument Bypass Results ===\n"
+                        },
+                        {
+                          "text": "#canvas-iframe found: true\n"
+                        },
+                        {
+                          "text": "contentDocument accessible: true\n"
+                        },
+                        {
+                          "text": "iframe src: (empty)\n"
+                        },
+                        {
+                          "text": "All iframes: [{\"index\":0,\"id\":\"canvas-iframe\",\"src\":\"(empty)\",\"width\":\"\",\"height\":\"\"}]\n"
+                        },
+                        {
+                          "text": "--- Reference comparison ---\n"
+                        },
+                        {
+                          "text": "Same toDataURL ref: false\n"
+                        },
+                        {
+                          "text": "Main toDataURL.toString(): function toDataURL() { [native code] }\n"
+                        },
+                        {
+                          "text": "iframe toDataURL.toString(): function toDataURL() { [native code] }\n"
+                        },
+                        {
+                          "text": "--- Data URL comparison ---\n"
+                        },
+                        {
+                          "text": "Main dataURL: data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAANwAAAAeCAYAAABHenA+AAAQAElEQVR4Ae...\n"
+                        },
+                        {
+                          "text": "iframe dataURL: data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAANwAAAAeCAYAAABHenA+AAAQAElEQVR4Ae...\n"
+                        },
+                        {
+                          "text": "Cross (iframe TDU on main canvas): data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAANwAAAAeCAYAAABHenA+AAAQAElEQVR4Ae...\n"
+                        },
+                        {
+                          "text": "Reverse cross (main TDU on iframe canvas): data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAANwAAAAeCAYAAABHenA+AAAQAElEQVR4Ae...\n"
+                        },
+                        {
+                          "text": "DataURLs match: true\n"
+                        },
+                        {
+                          "text": "Cross matches main: true\n"
+                        },
+                        {
+                          "text": "Cross matches iframe: true\n"
+                        },
+                        {
+                          "text": "--- Pixel diff ---\n"
+                        },
+                        {
+                          "text": "Pixel diffs: 0/26400\n"
+                        },
+                        {
+                          "text": "--- Noise detection ---\n"
+                        },
+                        {
+                          "text": "Main world canvas noised: true\n"
+                        },
+                        {
+                          "text": "iframe canvas noised: true\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:53:19.702Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                            "line": 586,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "78cac09949ca3ce60e3d-10c77e5c1a9bb99b0715",
+              "file": "external/canvas-bypass-proof.spec.ts",
+              "line": 585,
+              "column": 7
+            },
+            {
+              "title": "regression: dynamic about:blank iframe with synchronous access",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                        "line": 802,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2507,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "=== Dynamic iframe Regression Results ===\n"
+                        },
+                        {
+                          "text": "Main noised: true\n"
+                        },
+                        {
+                          "text": "Dynamic iframe (contentDocument): true\n"
+                        },
+                        {
+                          "text": "Dynamic iframe (contentWindow): true\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:53:24.445Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                            "line": 802,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "78cac09949ca3ce60e3d-3a18a7f418b4a3e48de0",
+              "file": "external/canvas-bypass-proof.spec.ts",
+              "line": 801,
+              "column": 7
+            },
+            {
+              "title": "regression: cross-origin iframe preserves native behavior",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                        "line": 889,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 5555,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "=== Cross-Origin iframe Compatibility Results ===\n"
+                        },
+                        {
+                          "text": "contentWindow exists: true\n"
+                        },
+                        {
+                          "text": "contentDocument result: null\n"
+                        },
+                        {
+                          "text": "Main canvas still works: true\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:53:26.963Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                            "line": 889,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "78cac09949ca3ce60e3d-476f90c473c45bf307e6",
+              "file": "external/canvas-bypass-proof.spec.ts",
+              "line": 888,
+              "column": 7
+            },
+            {
+              "title": "descriptor camouflage: contentDocument getter",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                        "line": 962,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2418,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "=== contentDocument Descriptor Camouflage ===\n"
+                        },
+                        {
+                          "text": "getter exists: true\n"
+                        },
+                        {
+                          "text": "configurable: true\n"
+                        },
+                        {
+                          "text": "enumerable: true\n"
+                        },
+                        {
+                          "text": "toString: function get contentDocument() { [native code] }\n"
+                        },
+                        {
+                          "text": "looks native: true\n"
+                        },
+                        {
+                          "text": "FPT.call: function get contentDocument() { [native code] }\n"
+                        },
+                        {
+                          "text": "FPT looks native: true\n"
+                        },
+                        {
+                          "text": "has own toString: false\n"
+                        },
+                        {
+                          "text": "getter.name: get contentDocument\n"
+                        },
+                        {
+                          "text": "GOPDs consistent: true\n"
+                        },
+                        {
+                          "text": "Reflect consistent: true\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:53:32.529Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                            "line": 962,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "78cac09949ca3ce60e3d-293abebc6cce6fe142e6",
+              "file": "external/canvas-bypass-proof.spec.ts",
+              "line": 961,
+              "column": 7
+            },
+            {
+              "title": "descriptor camouflage: contentWindow getter",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                        "line": 1074,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2438,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "=== contentWindow Descriptor Camouflage ===\n"
+                        },
+                        {
+                          "text": "getter exists: true\n"
+                        },
+                        {
+                          "text": "configurable: true\n"
+                        },
+                        {
+                          "text": "enumerable: true\n"
+                        },
+                        {
+                          "text": "toString: function get contentWindow() { [native code] }\n"
+                        },
+                        {
+                          "text": "looks native: true\n"
+                        },
+                        {
+                          "text": "FPT.call: function get contentWindow() { [native code] }\n"
+                        },
+                        {
+                          "text": "FPT looks native: true\n"
+                        },
+                        {
+                          "text": "has own toString: false\n"
+                        },
+                        {
+                          "text": "getter.name: get contentWindow\n"
+                        },
+                        {
+                          "text": "GOPDs consistent: true\n"
+                        },
+                        {
+                          "text": "Reflect consistent: true\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:53:34.956Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                            "line": 1074,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "78cac09949ca3ce60e3d-67b44be7e1604c578bab",
+              "file": "external/canvas-bypass-proof.spec.ts",
+              "line": 1073,
+              "column": 7
+            },
+            {
+              "title": "first-nav seed-noise alignment (no reload)",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                        "line": 1178,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2786,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "Seed-noise alignment: seed=448533007 expectedCS=130541553\n"
+                        },
+                        {
+                          "text": "  expected RGB: [129, 130, 129]\n"
+                        },
+                        {
+                          "text": "  actual   RGB: [129, 130, 129]\n"
+                        },
+                        {
+                          "text": "  match: true\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:53:37.405Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                            "line": 1178,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "78cac09949ca3ce60e3d-4ddde0fad0d571725f20",
+              "file": "external/canvas-bypass-proof.spec.ts",
+              "line": 1177,
+              "column": 7
+            },
+            {
+              "title": "cross-tab geometric canvas identity (contract assertion)",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                        "line": 1275,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3025,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "Geometric cross-tab: tab1 noised=true seed=-1137043455\n"
+                        },
+                        {
+                          "text": "Geometric cross-tab: tab2 noised=true seed=-1137043455\n"
+                        },
+                        {
+                          "text": "Geometric cross-tab: seeds match=true\n"
+                        },
+                        {
+                          "text": "Geometric cross-tab: TDU IDENTICAL=true\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:53:40.202Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                            "line": 1275,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "78cac09949ca3ce60e3d-cca12534a58e2bea59fe",
+              "file": "external/canvas-bypass-proof.spec.ts",
+              "line": 1274,
+              "column": 7
+            },
+            {
+              "title": "manifest compatibility: no load warnings with match_about_blank",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                        "line": 1418,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2584,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "=== Manifest Compatibility Check ===\n"
+                        },
+                        {
+                          "text": "Main canvas noised: true\n"
+                        },
+                        {
+                          "text": "UA spoofed: true\n"
+                        },
+                        {
+                          "text": "Platform: MacIntel\n"
+                        },
+                        {
+                          "text": "Iframe noised: true\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:53:43.237Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                            "line": 1418,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "78cac09949ca3ce60e3d-5dab97ee8b69445f3b61",
+              "file": "external/canvas-bypass-proof.spec.ts",
+              "line": 1417,
+              "column": 7
+            },
+            {
+              "title": "adversarial: first inline script cannot observe convergence mechanism",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                        "line": 1490,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1390,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "=== Adversarial Inline Script Detection Profile ===\n"
+                        },
+                        {
+                          "text": "--- First parser-executed <head><script> ---\n"
+                        },
+                        {
+                          "text": "  __pg_converge__ in window: false\n"
+                        },
+                        {
+                          "text": "  __pg_converge__ typeof: undefined\n"
+                        },
+                        {
+                          "text": "  __pg_converge__ descriptor: null\n"
+                        },
+                        {
+                          "text": "  __pg* globals: []\n"
+                        },
+                        {
+                          "text": "  __pg* symbols: []\n"
+                        },
+                        {
+                          "text": "  suspicious props: []\n"
+                        },
+                        {
+                          "text": "  suspicious keys: []\n"
+                        },
+                        {
+                          "text": "--- Adversarial event listener ---\n"
+                        },
+                        {
+                          "text": "  __pgc events captured: 2\n"
+                        },
+                        {
+                          "text": "  event details: [{\"detail\":576925984,\"time\":62.945372265679175},{\"detail\":576925984,\"time\":72.06055688998526}]\n"
+                        },
+                        {
+                          "text": "--- Post-load ---\n"
+                        },
+                        {
+                          "text": "  __pg* globals: []\n"
+                        },
+                        {
+                          "text": "  suspicious props: []\n"
+                        },
+                        {
+                          "text": "  canvas noised: true\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:53:45.832Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-bypass-proof.spec.ts",
+                            "line": 1490,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "78cac09949ca3ce60e3d-08a52e292a6d95fd3164",
+              "file": "external/canvas-bypass-proof.spec.ts",
+              "line": 1489,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "external\\canvas-investigation.spec.ts",
+      "file": "external/canvas-investigation.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Canvas Extraction Investigation @external",
+          "file": "external/canvas-investigation.spec.ts",
+          "line": 57,
+          "column": 6,
+          "specs": [
+            {
+              "title": "extraction method comparison pre/post rotation",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-investigation.spec.ts",
+                        "line": 61,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 4776,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "toDataURL: CHANGED | pre=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAANwAAAAeCAYAAABHenA+AAAQAElEQVR4Ae... | post=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAANwAAAAeCAYAAABHenA+AAAQAElEQVR4Ae...\n"
+                        },
+                        {
+                          "text": "getImageData: CHANGED | pre=755a92ea | post=8bd03147\n"
+                        },
+                        {
+                          "text": "toBlob: CHANGED | pre=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAANwAAAAeCAYAAABHenA+AAAQAElEQVR4Ae... | post=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAANwAAAAeCAYAAABHenA+AAAQAElEQVR4Ae...\n"
+                        },
+                        {
+                          "text": "offscreenCanvas: CHANGED | pre=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAANwAAAAeCAYAAABHenA+AAAQAElEQVR4Ae... | post=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAANwAAAAeCAYAAABHenA+AAAQAElEQVR4Ae...\n"
+                        },
+                        {
+                          "text": "webglReadPixels: CHANGED | pre=a9a90d83 | post=bd8dc097\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:53:47.244Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-investigation.spec.ts",
+                            "line": 61,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fdd4f8fdb65442ebce28-e25562be5bbf92fa7ce2",
+              "file": "external/canvas-investigation.spec.ts",
+              "line": 60,
+              "column": 7
+            },
+            {
+              "title": "BrowserLeaks canvas hash vs local toDataURL",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-investigation.spec.ts",
+                        "line": 217,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 11448,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "=== BrowserLeaks Canvas Investigation ===\n"
+                        },
+                        {
+                          "text": "BL hash PRE:  b04dc28876c7c054e17e706b025f71bd\n"
+                        },
+                        {
+                          "text": "BL hash POST: 3665dd9473e434e4d6e45d386d88d567\n"
+                        },
+                        {
+                          "text": "BL hash changed: true\n"
+                        },
+                        {
+                          "text": "Our toDataURL PRE:  data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAANwAAAAeCAYAAABHenA+AAAQAElEQVR4Aex5CZhVxbXuX1X7nKYbaB...\n"
+                        },
+                        {
+                          "text": "Our toDataURL POST: data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAANwAAAAeCAYAAABHenA+AAAQAElEQVR4Aex6B3xVRdr+MzP33hAgAa...\n"
+                        },
+                        {
+                          "text": "Our toDataURL changed: true\n"
+                        },
+                        {
+                          "text": "Our pixel hash PRE:  a02655de\n"
+                        },
+                        {
+                          "text": "Our pixel hash POST: 01a4094a\n"
+                        },
+                        {
+                          "text": "Our pixel hash changed: true\n"
+                        },
+                        {
+                          "text": "Page canvases: []\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:53:52.030Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-investigation.spec.ts",
+                            "line": 217,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fdd4f8fdb65442ebce28-bdcd70b41ad7cee3b969",
+              "file": "external/canvas-investigation.spec.ts",
+              "line": 216,
+              "column": 7
+            },
+            {
+              "title": "injection timing: does page JS see patched or original toDataURL",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-investigation.spec.ts",
+                        "line": 356,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3537,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "=== Injection Timing Results ===\n"
+                        },
+                        {
+                          "text": "toDataURL.toString(): function toDataURL() { [native code] }\n"
+                        },
+                        {
+                          "text": "toDataURL looks native: true\n"
+                        },
+                        {
+                          "text": "getImageData looks native: true\n"
+                        },
+                        {
+                          "text": "First pixels (gray canvas): 130,129,130,255,128,128,125,255,126,131,130,255\n"
+                        },
+                        {
+                          "text": "Noised pixels: 1112/1500\n"
+                        },
+                        {
+                          "text": "Noise detected: true\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:54:03.488Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\canvas-investigation.spec.ts",
+                            "line": 356,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fdd4f8fdb65442ebce28-dab6b8afb0dfb3d3de63",
+              "file": "external/canvas-investigation.spec.ts",
+              "line": 355,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "external\\cloudflare.spec.ts",
+      "file": "external/cloudflare.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Cloudflare @external",
+          "file": "external/cloudflare.spec.ts",
+          "line": 8,
+          "column": 6,
+          "specs": [
+            {
+              "title": "loads Cloudflare-protected page without block",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\cloudflare.spec.ts",
+                        "line": 12,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2242,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:54:07.039Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\cloudflare.spec.ts",
+                            "line": 12,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "84c93930ef52f3d125da-adff4c1282b0ad8675cb",
+              "file": "external/cloudflare.spec.ts",
+              "line": 11,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "external\\coveryourtracks.spec.ts",
+      "file": "external/coveryourtracks.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Cover Your Tracks @external",
+          "file": "external/coveryourtracks.spec.ts",
+          "line": 115,
+          "column": 6,
+          "specs": [
+            {
+              "title": "runs test and produces results",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\coveryourtracks.spec.ts",
+                        "line": 119,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 23979,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:54:09.299Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\coveryourtracks.spec.ts",
+                            "line": 119,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "39fb220478c6e824e31e-74222ce54b88dc67c92f",
+              "file": "external/coveryourtracks.spec.ts",
+              "line": 118,
+              "column": 7
+            },
+            {
+              "title": "tracker blocking detected",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\coveryourtracks.spec.ts",
+                        "line": 150,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 20860,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:54:33.295Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\coveryourtracks.spec.ts",
+                            "line": 150,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "39fb220478c6e824e31e-edd3d9a5a3b99c84592e",
+              "file": "external/coveryourtracks.spec.ts",
+              "line": 149,
+              "column": 7
+            },
+            {
+              "title": "fingerprint changes on rotation",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\coveryourtracks.spec.ts",
+                        "line": 172,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 42015,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [
+                        {
+                          "text": "WARNING: Cover Your Tracks showed identical results pre/post rotation\n"
+                        }
+                      ],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:54:54.174Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\coveryourtracks.spec.ts",
+                            "line": 172,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "39fb220478c6e824e31e-a91392e987df43135f15",
+              "file": "external/coveryourtracks.spec.ts",
+              "line": 171,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "external\\creepjs.spec.ts",
+      "file": "external/creepjs.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "CreepJS @external",
+          "file": "external/creepjs.spec.ts",
+          "line": 83,
+          "column": 6,
+          "specs": [
+            {
+              "title": "generates trust score and fingerprint",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\creepjs.spec.ts",
+                        "line": 87,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 8028,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:55:36.216Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\creepjs.spec.ts",
+                            "line": 87,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "472309dfdcef8b2c0802-4bbacaf2abf36db9a294",
+              "file": "external/creepjs.spec.ts",
+              "line": 86,
+              "column": 7
+            },
+            {
+              "title": "fingerprint changes on rotation",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\creepjs.spec.ts",
+                        "line": 123,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 9863,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:55:44.253Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\creepjs.spec.ts",
+                            "line": 123,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "472309dfdcef8b2c0802-75153fca979b71a6bcc5",
+              "file": "external/creepjs.spec.ts",
+              "line": 122,
+              "column": 7
+            },
+            {
+              "title": "same-profile two-tab measurement",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\creepjs.spec.ts",
+                        "line": 177,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 8811,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "CreepJS cross-tab: hash1=0000000000000000000000000000000000000000000000000000000000000000 hash2=0000000000000000000000000000000000000000000000000000000000000000 match=true\n"
+                        },
+                        {
+                          "text": "CreepJS cross-tab: trust1=0% trust2=0% match=true\n"
+                        },
+                        {
+                          "text": "CreepJS cross-tab: lies1=null lies2=null match=true\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:55:54.127Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\creepjs.spec.ts",
+                            "line": 177,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "472309dfdcef8b2c0802-b02efbef55b1d474d04c",
+              "file": "external/creepjs.spec.ts",
+              "line": 176,
+              "column": 7
+            },
+            {
+              "title": "lie count is observable",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\creepjs.spec.ts",
+                        "line": 237,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 4381,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:56:02.949Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\creepjs.spec.ts",
+                            "line": 237,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "472309dfdcef8b2c0802-67c86cc39ddbf5420583",
+              "file": "external/creepjs.spec.ts",
+              "line": 236,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "external\\fingerprintjs.spec.ts",
+      "file": "external/fingerprintjs.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "FingerprintJS @external",
+          "file": "external/fingerprintjs.spec.ts",
+          "line": 43,
+          "column": 6,
+          "specs": [
+            {
+              "title": "visitorId is generated",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\fingerprintjs.spec.ts",
+                        "line": 47,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 10399,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:56:07.346Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\fingerprintjs.spec.ts",
+                            "line": 47,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "0aac1b6f636e4286f214-44b1999a61e407eedf5b",
+              "file": "external/fingerprintjs.spec.ts",
+              "line": 46,
+              "column": 7
+            },
+            {
+              "title": "visitorId cross-tab measurement",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\fingerprintjs.spec.ts",
+                        "line": 72,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 11897,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [
+                        {
+                          "text": "NOTE: visitorId differs across tabs — expected with per-page canvas noise\n"
+                        }
+                      ],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:56:17.757Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\fingerprintjs.spec.ts",
+                            "line": 72,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "0aac1b6f636e4286f214-f5067c0d802c43fb4090",
+              "file": "external/fingerprintjs.spec.ts",
+              "line": 71,
+              "column": 7
+            },
+            {
+              "title": "visitorId changes on rotation",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\fingerprintjs.spec.ts",
+                        "line": 109,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 14865,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:56:29.666Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\fingerprintjs.spec.ts",
+                            "line": 109,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "0aac1b6f636e4286f214-57a3b0eda566fb5fc16b",
+              "file": "external/fingerprintjs.spec.ts",
+              "line": 108,
+              "column": 7
+            },
+            {
+              "title": "3 rotations produce 3 distinct visitorIds",
+              "ok": true,
+              "tags": [
+                "external"
+              ],
+              "tests": [
+                {
+                  "timeout": 270000,
+                  "annotations": [
+                    {
+                      "type": "slow",
+                      "location": {
+                        "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\fingerprintjs.spec.ts",
+                        "line": 147,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "external",
+                  "projectName": "external",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 23003,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-20T05:56:44.542Z",
+                      "annotations": [
+                        {
+                          "type": "slow",
+                          "location": {
+                            "file": "C:\\snapdragon\\phantomgrid-repo\\e2e\\external\\fingerprintjs.spec.ts",
+                            "line": 147,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "0aac1b6f636e4286f214-5050b0ac1d4dc1b879f0",
+              "file": "external/fingerprintjs.spec.ts",
+              "line": 146,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-05-20T05:52:34.643Z",
+    "duration": 272957.809,
+    "expected": 33,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}
