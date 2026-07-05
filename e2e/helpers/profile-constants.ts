@@ -1,5 +1,6 @@
 /**
- * Known-good value sets mirrored from profiles.js and anti-fingerprint.js.
+ * Known-good value sets mirrored from profiles.js and core.js
+ * (bundled into anti-fingerprint-bootstrap.js).
  * Used by spec files to validate that spoofed values are plausible.
  */
 
@@ -19,9 +20,9 @@ export const KNOWN_WIDTHS = KNOWN_SCREENS.map(s => s.width);
 
 export const KNOWN_CORES = [2, 4, 6, 8, 10, 12, 16];
 
-export const KNOWN_MEMORY = [4, 8, 16, 32];
+export const KNOWN_MEMORY = [4, 8];
 
-export const KNOWN_COLOR_DEPTHS = [24, 32];
+export const KNOWN_COLOR_DEPTHS = [24];
 
 export const KNOWN_TIMEZONES = [
   "America/New_York", "America/Chicago", "America/Denver",
