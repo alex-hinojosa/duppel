@@ -221,14 +221,18 @@ function bootstrapAntiFingerprint(seed) {
       };
     }
     __name(generateProfile, "generateProfile");
-    function getTimezoneOffset(tz) {
+    const _tzFmtCache = /* @__PURE__ */ Object.create(null);
+    function getTimezoneOffset(tz, when) {
       try {
-        const now = /* @__PURE__ */ new Date();
-        const fmt = new ORIG.DateTimeFormat("en-US", {
-          timeZone: tz,
-          timeZoneName: "shortOffset"
-        });
-        const parts = fmt.formatToParts(now);
+        const at = when || /* @__PURE__ */ new Date();
+        let fmt = _tzFmtCache[tz];
+        if (!fmt) {
+          fmt = _tzFmtCache[tz] = new ORIG.DateTimeFormat("en-US", {
+            timeZone: tz,
+            timeZoneName: "shortOffset"
+          });
+        }
+        const parts = fmt.formatToParts(at);
         const tzPart = parts.find((p) => p.type === "timeZoneName");
         if (tzPart) {
           const match = tzPart.value.match(/GMT([+-]?\d+)?(?::(\d+))?/);
@@ -361,6 +365,7 @@ function bootstrapAntiFingerprint(seed) {
       spoof,
       disguise,
       mulberry32,
+      getTimezoneOffset,
       _nativeStrings,
       _spoofedProps
     };
@@ -1584,28 +1589,31 @@ function bootstrapAntiFingerprint(seed) {
 
   // src/content/anti-fingerprint/misc.js
   function installMisc(ctx) {
-    const { ORIG, profile, state, spoof, disguise, mulberry32 } = ctx;
-    ORIG.DateTimeFormat.prototype.resolvedOptions = disguise(function() {
-      const opts = ORIG.resolvedOptions.call(this);
-      opts.timeZone = profile.timezone;
-      return opts;
-    }, "resolvedOptions");
+    const { ORIG, profile, state, spoof, disguise, mulberry32, getTimezoneOffset } = ctx;
+    const _explicitTz = /* @__PURE__ */ new WeakSet();
+    function tzArgs(args) {
+      const opts = args[1];
+      if (opts && opts.timeZone !== void 0) {
+        return { args, explicit: true };
+      }
+      const merged = opts ? Object.assign({}, opts, { timeZone: profile.timezone }) : { timeZone: profile.timezone };
+      const next = args.slice();
+      next[1] = merged;
+      return { args: next, explicit: false };
+    }
+    __name(tzArgs, "tzArgs");
     const tzProxy = new Proxy(ORIG.DateTimeFormat, {
       construct(target, args) {
-        if (args[1]) {
-          args[1].timeZone = profile.timezone;
-        } else {
-          args[1] = { timeZone: profile.timezone };
-        }
-        return new target(...args);
+        const r = tzArgs(args);
+        const inst = new target(...r.args);
+        if (r.explicit) _explicitTz.add(inst);
+        return inst;
       },
       apply(target, thisArg, args) {
-        if (args[1]) {
-          args[1].timeZone = profile.timezone;
-        } else {
-          args[1] = { timeZone: profile.timezone };
-        }
-        return target.apply(thisArg, args);
+        const r = tzArgs(args);
+        const inst = target.apply(thisArg, r.args);
+        if (r.explicit && inst) _explicitTz.add(inst);
+        return inst;
       }
     });
     try {
@@ -1616,8 +1624,18 @@ function bootstrapAntiFingerprint(seed) {
       });
     } catch (e) {
     }
+    ORIG.DateTimeFormat.prototype.resolvedOptions = disguise(function() {
+      const opts = ORIG.resolvedOptions.call(this);
+      if (!_explicitTz.has(this)) {
+        opts.timeZone = profile.timezone;
+      }
+      return opts;
+    }, "resolvedOptions");
     Date.prototype.getTimezoneOffset = disguise(function() {
-      return state.currentTzOffset;
+      const t = this.getTime();
+      if (t !== t) return NaN;
+      const off = getTimezoneOffset(profile.timezone, this);
+      return typeof off === "number" && off === off ? off : state.currentTzOffset;
     }, "getTimezoneOffset");
     if (typeof navigator !== "undefined" && navigator.mediaDevices && typeof MediaDevices !== "undefined" && typeof MediaDevices.prototype.enumerateDevices === "function" && typeof MediaDeviceInfo !== "undefined") {
       let makeDeviceId = function(seed2, kind) {

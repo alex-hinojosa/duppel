@@ -4,25 +4,43 @@
  */
 
 export function installMisc(ctx) {
-  const { ORIG, profile, state, spoof, disguise, mulberry32 } = ctx;
+  const { ORIG, profile, state, spoof, disguise, mulberry32, getTimezoneOffset } = ctx;
 
   // === Timezone spoofing (DST-aware) ===
-  ORIG.DateTimeFormat.prototype.resolvedOptions = disguise(function() {
-    const opts = ORIG.resolvedOptions.call(this);
-    opts.timeZone = profile.timezone;
-    return opts;
-  }, "resolvedOptions");
+  // Spoof the persona timezone for the DEFAULT (no explicit timeZone) case only.
+  // If a caller pins an explicit timeZone (e.g. { timeZone: 'UTC' }), honor it:
+  // overriding it breaks legitimate site features (flight times, "show in UTC")
+  // and is itself incoherent — format()/formatToParts() would use the persona
+  // zone while the caller explicitly asked for another. Instances built with an
+  // explicit zone are tracked so resolvedOptions() stays consistent with output.
+  const _explicitTz = new WeakSet();
+
+  // Build args for the real constructor: inject the persona zone only when the
+  // caller supplied none. Never mutate the caller's own options object.
+  function tzArgs(args) {
+    const opts = args[1];
+    if (opts && opts.timeZone !== undefined) {
+      return { args: args, explicit: true };            // explicit → passthrough
+    }
+    const merged = opts ? Object.assign({}, opts, { timeZone: profile.timezone })
+                        : { timeZone: profile.timezone };
+    const next = args.slice();
+    next[1] = merged;
+    return { args: next, explicit: false };
+  }
 
   const tzProxy = new Proxy(ORIG.DateTimeFormat, {
     construct(target, args) {
-      if (args[1]) { args[1].timeZone = profile.timezone; }
-      else { args[1] = { timeZone: profile.timezone }; }
-      return new target(...args);
+      const r = tzArgs(args);
+      const inst = new target(...r.args);
+      if (r.explicit) _explicitTz.add(inst);
+      return inst;
     },
     apply(target, thisArg, args) {
-      if (args[1]) { args[1].timeZone = profile.timezone; }
-      else { args[1] = { timeZone: profile.timezone }; }
-      return target.apply(thisArg, args);
+      const r = tzArgs(args);
+      const inst = target.apply(thisArg, r.args);
+      if (r.explicit && inst) _explicitTz.add(inst);
+      return inst;
     }
   });
   try {
@@ -31,8 +49,22 @@ export function installMisc(ctx) {
     });
   } catch(e) {}
 
+  // resolvedOptions: report the persona zone for default formatters; honor the
+  // caller's explicit zone (tracked above) so it matches format() output.
+  ORIG.DateTimeFormat.prototype.resolvedOptions = disguise(function() {
+    const opts = ORIG.resolvedOptions.call(this);
+    if (!_explicitTz.has(this)) { opts.timeZone = profile.timezone; }
+    return opts;
+  }, "resolvedOptions");
+
+  // getTimezoneOffset: DST-aware — return the persona zone's offset AT THE
+  // RECEIVER DATE, not a frozen "now" constant. A year-constant offset
+  // contradicts a DST-observing IANA zone (a classic CreepJS lie).
   Date.prototype.getTimezoneOffset = disguise(function() {
-    return state.currentTzOffset;
+    const t = this.getTime();
+    if (t !== t) return NaN;                            // invalid date → NaN (matches native)
+    const off = getTimezoneOffset(profile.timezone, this);
+    return (typeof off === "number" && off === off) ? off : state.currentTzOffset;
   }, "getTimezoneOffset");
 
   // === WebRTC ===

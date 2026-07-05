@@ -247,13 +247,20 @@ export function createContext(sessionSeed) {
 
   // === DST-aware timezone offset ===
   // Uses the REAL Intl.DateTimeFormat (saved in ORIG) before we proxy it.
-  function getTimezoneOffset(tz) {
+  // DST-aware: offset of `tz` in effect AT `when` (default: now). Formatter is
+  // cached per-tz (its output varies only by the date passed to formatToParts)
+  // to keep the getTimezoneOffset hot path cheap.
+  const _tzFmtCache = Object.create(null);
+  function getTimezoneOffset(tz, when) {
     try {
-      const now = new Date();
-      const fmt = new ORIG.DateTimeFormat("en-US", {
-        timeZone: tz, timeZoneName: "shortOffset",
-      });
-      const parts = fmt.formatToParts(now);
+      const at = when || new Date();
+      let fmt = _tzFmtCache[tz];
+      if (!fmt) {
+        fmt = _tzFmtCache[tz] = new ORIG.DateTimeFormat("en-US", {
+          timeZone: tz, timeZoneName: "shortOffset",
+        });
+      }
+      const parts = fmt.formatToParts(at);
       const tzPart = parts.find(p => p.type === "timeZoneName");
       if (tzPart) {
         const match = tzPart.value.match(/GMT([+-]?\d+)?(?::(\d+))?/);
@@ -423,6 +430,7 @@ export function createContext(sessionSeed) {
     spoof,
     disguise,
     mulberry32,
+    getTimezoneOffset,
     _nativeStrings,
     _spoofedProps,
   };
