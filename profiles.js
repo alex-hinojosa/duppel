@@ -140,8 +140,8 @@ const SCREENS = [
   { width: 1600, height: 900,  avail: 860  },
 ];
 const CORES = [2, 4, 6, 8, 10, 12, 16];
-const MEMORY = [4, 8, 8, 8, 16, 16, 32];
-const COLOR_DEPTHS = [24, 24, 24, 32];
+const MEMORY = [4, 8]; // Chrome clamps navigator.deviceMemory to max 8; >8 is an impossible-value tell. Keep in sync with core.js.
+const COLOR_DEPTHS = [24]; // Modern Chrome reports 24 ~universally; 32 is a legacy tell. Keep in sync with core.js.
 const LANGUAGES = [
   ["en-US", "en"], ["en-US", "en", "es"], ["en-GB", "en"],
   ["en-US"], ["en-US", "en", "fr"], ["en-US", "en", "de"],

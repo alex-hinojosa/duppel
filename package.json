@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "node esbuild.config.mjs",
-    "build:check": "node esbuild.config.mjs && git diff --exit-code anti-fingerprint.js",
+    "build:check": "node esbuild.config.mjs && git diff --exit-code anti-fingerprint-bootstrap.js",
     "build:chrome": "node esbuild.config.mjs chrome",
     "build:firefox": "node esbuild.config.mjs firefox",
     "build:all": "node esbuild.config.mjs all",
@@ -25,7 +25,7 @@
   },
   "version": "1.0.0",
   "description": "",
-  "main": "anti-fingerprint.js",
+  "main": "anti-fingerprint-bootstrap.js",
   "directories": {
     "doc": "docs",
     "test": "tests"

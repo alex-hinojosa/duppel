@@ -922,7 +922,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           removeRuleIds: [STRICT_ARM_RULE_ID],
         }).catch(() => {});
       }
-      callback({ ok: true, strictFirstDoc: STATE.strictFirstDoc });
+      sendResponse({ ok: true, strictFirstDoc: STATE.strictFirstDoc });
       break;
 
     // v0.1.1 C4: native-compatible mode toggle (Spec Section 3)

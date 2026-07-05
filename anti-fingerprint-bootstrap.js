@@ -164,8 +164,8 @@ function bootstrapAntiFingerprint(seed) {
       { width: 1600, height: 900, avail: 860 }
     ];
     const CORES = [2, 4, 6, 8, 10, 12, 16];
-    const MEMORY = [4, 8, 8, 8, 16, 16, 32];
-    const COLOR_DEPTHS = [24, 24, 24, 32];
+    const MEMORY = [4, 8];
+    const COLOR_DEPTHS = [24];
     const LANGUAGES = [
       ["en-US", "en"],
       ["en-US", "en", "es"],
