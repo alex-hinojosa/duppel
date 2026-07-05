@@ -168,7 +168,11 @@ cleanCookiesBtn.addEventListener("click", () => {
 fireBeaconsBtn.addEventListener("click", () => {
   fireBeaconsBtn.textContent = "Firing...";
   B.runtime.sendMessage({ type: "fireBeaconsNow" }, (resp) => {
-    fireBeaconsBtn.textContent = `Fired ${resp?.fired || 0}`;
+    // Beacons are queued to the page context (bridge.js) and fire on the
+    // next user interaction — the SW returns `count` (configs queued), not
+    // an immediate fire count. Reading `resp.fired` (never returned) always
+    // showed "Fired 0". Report the queued count instead.
+    fireBeaconsBtn.textContent = `Queued ${resp?.count || 0}`;
     setTimeout(() => { fireBeaconsBtn.textContent = "Fire Beacons Now"; }, 2000);
     B.runtime.sendMessage({ type: "getState" }, (state) => {
       if (state) updateUI(state);

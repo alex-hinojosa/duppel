@@ -467,7 +467,7 @@ function bootstrapAntiFingerprint(seed) {
         fullVersionList: brands.map((b) => ({ brand: b.brand, version: `${b.version}.0.0.0` })),
         wow64: false
       };
-      const uadProto = Object.create(Object.prototype);
+      const uadProto = Object.create(NavigatorUAData.prototype);
       Object.defineProperties(uadProto, {
         brands: { get() {
           return brands;
@@ -487,15 +487,6 @@ function bootstrapAntiFingerprint(seed) {
       }, "getHighEntropyValues");
       disguise(uadProto.getHighEntropyValues, "getHighEntropyValues");
       disguise(uadProto.toJSON, "toJSON");
-      if (typeof NavigatorUAData !== "undefined") {
-        try {
-          Object.defineProperty(NavigatorUAData, Symbol.hasInstance, {
-            value: /* @__PURE__ */ __name((obj) => obj === fakeUAData || obj instanceof uadProto.constructor, "value"),
-            configurable: true
-          });
-        } catch (e) {
-        }
-      }
       const fakeUAData = Object.create(uadProto);
       spoof(Navigator.prototype, "userAgentData", () => fakeUAData);
     }
@@ -818,21 +809,25 @@ function bootstrapAntiFingerprint(seed) {
           return origMatchMedia(query);
         }
         const fakeList = Object.create(MediaQueryList.prototype);
-        Object.defineProperties(fakeList, {
-          matches: { get: /* @__PURE__ */ __name(() => result, "get"), enumerable: true },
-          media: { get: /* @__PURE__ */ __name(() => query, "get"), enumerable: true }
-        });
-        fakeList.addEventListener = function() {
-        };
-        fakeList.removeEventListener = function() {
-        };
-        fakeList.addListener = function() {
-        };
-        fakeList.removeListener = function() {
-        };
-        fakeList.dispatchEvent = function() {
+        const getMatches = disguise(/* @__PURE__ */ __name(function matches() {
+          return result;
+        }, "matches"), "get matches", 0);
+        const getMedia = disguise(/* @__PURE__ */ __name(function media() {
+          return query;
+        }, "media"), "get media", 0);
+        ORIG.defineProperty.call(Object, fakeList, "matches", { get: getMatches, enumerable: true, configurable: true });
+        ORIG.defineProperty.call(Object, fakeList, "media", { get: getMedia, enumerable: true, configurable: true });
+        fakeList.addEventListener = disguise(/* @__PURE__ */ __name(function addEventListener() {
+        }, "addEventListener"), "addEventListener", 2);
+        fakeList.removeEventListener = disguise(/* @__PURE__ */ __name(function removeEventListener() {
+        }, "removeEventListener"), "removeEventListener", 2);
+        fakeList.addListener = disguise(/* @__PURE__ */ __name(function addListener() {
+        }, "addListener"), "addListener", 1);
+        fakeList.removeListener = disguise(/* @__PURE__ */ __name(function removeListener() {
+        }, "removeListener"), "removeListener", 1);
+        fakeList.dispatchEvent = disguise(/* @__PURE__ */ __name(function dispatchEvent() {
           return true;
-        };
+        }, "dispatchEvent"), "dispatchEvent", 1);
         return fakeList;
       }, "matchMedia");
     }

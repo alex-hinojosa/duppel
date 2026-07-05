@@ -335,15 +335,20 @@ export function installScreen(ctx) {
       // so forwarding real change events would leak actual dimensions
       // via event.matches (rowan finding #2).
       const fakeList = Object.create(MediaQueryList.prototype);
-      Object.defineProperties(fakeList, {
-        matches: { get: () => result, enumerable: true },
-        media: { get: () => query, enumerable: true },
-      });
-      fakeList.addEventListener = function() {};
-      fakeList.removeEventListener = function() {};
-      fakeList.addListener = function() {};
-      fakeList.removeListener = function() {};
-      fakeList.dispatchEvent = function() { return true; };
+      // Route getters + stub methods through disguise() so .toString()/.name look
+      // native (raw `() => result` / `function(){}` were an easy toString tell) and
+      // use native descriptor flags (enumerable+configurable, matching real
+      // MediaQueryList.matches/media). Arities match native: EventTarget methods
+      // are length 2/2/1, legacy add/removeListener are length 1.
+      const getMatches = disguise(function matches() { return result; }, "get matches", 0);
+      const getMedia = disguise(function media() { return query; }, "get media", 0);
+      ORIG.defineProperty.call(Object, fakeList, "matches", { get: getMatches, enumerable: true, configurable: true });
+      ORIG.defineProperty.call(Object, fakeList, "media", { get: getMedia, enumerable: true, configurable: true });
+      fakeList.addEventListener = disguise(function addEventListener() {}, "addEventListener", 2);
+      fakeList.removeEventListener = disguise(function removeEventListener() {}, "removeEventListener", 2);
+      fakeList.addListener = disguise(function addListener() {}, "addListener", 1);
+      fakeList.removeListener = disguise(function removeListener() {}, "removeListener", 1);
+      fakeList.dispatchEvent = disguise(function dispatchEvent() { return true; }, "dispatchEvent", 1);
       return fakeList;
     }, "matchMedia");
   }

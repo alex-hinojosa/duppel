@@ -104,10 +104,14 @@ export function installNavigator(ctx) {
       wow64: false,
     };
 
-    // Create a prototype that mirrors NavigatorUAData's method layout.
-    // brands/mobile/platform live as accessor properties on the prototype
-    // (matching Chrome's native shape), but read from our spoofed values.
-    const uadProto = Object.create(Object.prototype);
+    // Intermediate prototype that INHERITS from NavigatorUAData.prototype, so
+    // `x instanceof NavigatorUAData`, `x.constructor`, and prototype-chain
+    // probes resolve natively — no custom Symbol.hasInstance trap needed.
+    // brands/mobile/platform/toJSON/getHighEntropyValues are defined here,
+    // shadowing the native prototype's internal-slot getters (which would throw
+    // on a slot-less fake). The fake instance itself carries zero own properties,
+    // matching the native shape (getOwnPropertyNames(navigator.userAgentData) === []).
+    const uadProto = Object.create(NavigatorUAData.prototype);
     Object.defineProperties(uadProto, {
       brands:   { get() { return brands; },     enumerable: true, configurable: true },
       mobile:   { get() { return false; },      enumerable: true, configurable: true },
@@ -124,16 +128,12 @@ export function installNavigator(ctx) {
     disguise(uadProto.getHighEntropyValues, "getHighEntropyValues");
     disguise(uadProto.toJSON, "toJSON");
 
-    // Make instanceof NavigatorUAData return true for our objects
-    if (typeof NavigatorUAData !== "undefined") {
-      try {
-        Object.defineProperty(NavigatorUAData, Symbol.hasInstance, {
-          value: (obj) => obj === fakeUAData || obj instanceof uadProto.constructor,
-          configurable: true,
-        });
-      } catch(e) {}
-    }
-
+    // No Symbol.hasInstance override: the prior trap delegated to
+    // `obj instanceof uadProto.constructor` where uadProto.constructor was Object,
+    // which made EVERY object report `instanceof NavigatorUAData === true` (a lie
+    // detector trips on `({}) instanceof NavigatorUAData`) and left an own
+    // Symbol.hasInstance on the constructor (itself a tell). Inheriting from
+    // NavigatorUAData.prototype gives correct instanceof semantics natively.
     const fakeUAData = Object.create(uadProto);
     spoof(Navigator.prototype, "userAgentData", () => fakeUAData);
   }
