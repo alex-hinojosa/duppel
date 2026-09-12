@@ -55,14 +55,14 @@ The extension will activate immediately on all pages.
 
 ## Build from source
 
-The anti-fingerprint bootstrap function is bundled from modular source files in `src/content/anti-fingerprint/`. To rebuild after making changes:
+The anti-fingerprint bootstrap is bundled from modular source under `src/content/anti-fingerprint/`. Entry point `bootstrap-entry.js` is built into the named function `bootstrapAntiFingerprint(seed)` and written as `anti-fingerprint-bootstrap.js` for MAIN-world injection via `chrome.scripting.executeScript` (not a manifest MAIN content script). To rebuild after making changes:
 
 ```
 npm install
 npm run build
 ```
 
-This runs esbuild and produces `anti-fingerprint.js`. The build script also supports `npm run build:chrome` and `npm run build:firefox` to produce complete builds in `build/chrome/` and `build/firefox/`.
+This runs esbuild and produces `anti-fingerprint-bootstrap.js`. The build script also supports `npm run build:chrome` and `npm run build:firefox` to produce complete builds in `build/chrome/` and `build/firefox/`.
 
 ## Run tests
 
@@ -70,9 +70,11 @@ The test suite uses Playwright with a real Chromium browser and the extension lo
 
 ```
 npm run setup          # Install dependencies + Playwright browsers
-npm run test           # Run local + rotation tests (245 tests)
+npm run test           # Run local + rotation projects
 npm run test:external  # Run external site tests (browserleaks, creepjs, etc.)
 ```
+
+Older docs mentioned ~245 tests; the suite may now exceed that figure. Count via Playwright (`npx playwright test --list` or the project scripts above) rather than treating any fixed number as authoritative.
 
 ## Spoofed surfaces
 
@@ -92,7 +94,7 @@ npm run test:external  # Run external site tests (browserleaks, creepjs, etc.)
 | Timezone | Random timezone with DST-aware offset |
 | Client Hints | UA-CH platform, bitness, mobile |
 | matchMedia | Full evaluator for dimension/resolution/interaction queries |
-| Navigator.connection | Removed (high-entropy) |
+| Navigator.connection | Frozen native snapshot / clone; change events killed |
 | Navigator.webdriver | false |
 | Navigator.globalPrivacyControl | true |
 | enumerateDevices | Stable 3-device set with deterministic IDs |
@@ -113,16 +115,17 @@ npm run test:external  # Run external site tests (browserleaks, creepjs, etc.)
 ## Architecture
 
 ```
-manifest.json              Chrome MV3 manifest
-background.js              Service worker — identity management, DNR rules, rotation
-bridge.js                  Content script (ISOLATED world) — sessionStorage bridge
-anti-fingerprint.js        Content script (MAIN world) — all fingerprint spoofing
+manifest.json              Chrome MV3 manifest (ISOLATED bridge content script only)
+background.js              Service worker — identity, DNR, rotation, executeScript bootstrap
+bridge.js                  Content script (ISOLATED) — site-override + interaction-coupled chaff
+anti-fingerprint-bootstrap.js
+                           MAIN-world bootstrap (generated) — injected via executeScript
 poisoner.js                Tracker data poisoning engine
 profiles.js                Fingerprint profile definitions and generation
 rules/tracking.json        declarativeNetRequest rule definitions
 popup/                     Extension popup UI
 src/content/anti-fingerprint/
-  index.js                 Bundle entry point
+  bootstrap-entry.js       Bundle entry → anti-fingerprint-bootstrap.js
   core.js                  Shared utilities (disguise, spoof, GOPD normalization)
   canvas.js                Canvas 2D noise (toDataURL, toBlob, getImageData)
   webgl.js                 WebGL spoofing (params, readPixels, OffscreenCanvas)
@@ -133,6 +136,8 @@ src/content/anti-fingerprint/
   misc.js                  Timezone, enumerateDevices, Worker/SharedWorker wrapping
   iframe.js                Cross-frame consistency
 ```
+
+MAIN fingerprint spoofing is **not** registered as a manifest content script. `background.js` loads `anti-fingerprint-bootstrap.js` and injects `bootstrapAntiFingerprint(seed)` into the page MAIN world with `chrome.scripting.executeScript({ func, args })`. Seed delivery does not use `sessionStorage` or a bridge window property.
 
 ## License
 
