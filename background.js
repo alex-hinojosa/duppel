@@ -27,8 +27,10 @@ importScripts("profiles.js", "poisoner.js", "anti-fingerprint-bootstrap.js");
 //    Idempotence tracked extension-side via tabId/documentId.
 //
 // Strict bootstrap contract (Round 10 — success-driven DNR):
-//    HTTP UA spoofing (session-scoped DNR with condition.tabIds) applies
-//    ONLY for tabs with verified MAIN-world bootstrap for the current document.
+//    HTTP UA + Client Hints spoofing (session-scoped DNR with condition.tabIds)
+//    applies ONLY for tabs with verified MAIN-world bootstrap for the current document.
+//    A1: CH headers are SET (Chromium persona) or REMOVE (Firefox persona) via the
+//    same success-driven / tab-scoped path as UA — not via static tracking.json.
 //    Proof lifecycle:
 //    - Tab enters DNR only after executeScript .then() confirms (never before).
 //    - On navigation/reload: proof cleared via onBeforeNavigate + tabs.onUpdated.
@@ -373,8 +375,9 @@ chrome.webNavigation.onCommitted.addListener((details) => {
   // prevents this document's fetch/XHR from being spoofed.
   if (STATE.strictFirstDoc && !armedTabs.has(tabId)) {
     armedTabs.add(tabId);
-    const ua = STATE.sessionSeed ? generateProfile(STATE.sessionSeed)?.userAgent : null;
-    if (ua) {
+    const profile = STATE.sessionSeed ? generateProfile(STATE.sessionSeed) : null;
+    const requestHeaders = buildPersonaRequestHeaders(profile);
+    if (requestHeaders.length) {
       try {
         chrome.declarativeNetRequest.updateSessionRules({
           removeRuleIds: [STRICT_ARM_RULE_ID],
@@ -383,9 +386,7 @@ chrome.webNavigation.onCommitted.addListener((details) => {
             priority: 3,
             action: {
               type: "modifyHeaders",
-              requestHeaders: [
-                { header: "User-Agent", operation: "set", value: ua },
-              ],
+              requestHeaders,
             },
             condition: {
               urlFilter: "*",
@@ -467,7 +468,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 // Session mode (the default) uses updateTabScopedDNR() with verified proof.
 const UA_RULE_ID = 9999;
 
-async function updateUAHeaderRule(userAgent) {
+async function updateUAHeaderRule(profileOrUA) {
+  // Per-tab mode global dynamic rule. Accepts a profile object (preferred) or
+  // a legacy UA string. A1: includes persona-coherent Client Hints SET/REMOVE.
+  const profile = (profileOrUA && typeof profileOrUA === "object")
+    ? profileOrUA
+    : (profileOrUA ? { userAgent: profileOrUA } : null);
+  const requestHeaders = buildPersonaRequestHeaders(profile);
+  if (!requestHeaders.length) return;
   try {
     // Remove old rule, add new one
     await chrome.declarativeNetRequest.updateDynamicRules({
@@ -477,9 +485,7 @@ async function updateUAHeaderRule(userAgent) {
         priority: 3,
         action: {
           type: "modifyHeaders",
-          requestHeaders: [
-            { header: "User-Agent", operation: "set", value: userAgent },
-          ],
+          requestHeaders,
         },
         condition: {
           urlFilter: "*",
@@ -503,13 +509,16 @@ async function removeGlobalUAHeaderRule() {
 }
 
 // === Tab-Scoped DNR (Round 10: success-driven via session rules + tabIds) ===
-// Session mode: HTTP UA is spoofed only for tabs where JS bootstrap succeeded.
-// Uses chrome.declarativeNetRequest.updateSessionRules with condition.tabIds
-// so unbootstrapped tabs (chrome://, failed executeScript) get native UA.
-// Session rules are ephemeral — they die when the browser closes, which is
-// correct because bootstrappedTabs is also ephemeral.
+// Session mode: HTTP UA + Client Hints are spoofed only for tabs where JS
+// bootstrap succeeded. Uses chrome.declarativeNetRequest.updateSessionRules
+// with condition.tabIds so unbootstrapped tabs (chrome://, failed executeScript)
+// get native UA/CH. Session rules are ephemeral — they die when the browser
+// closes, which is correct because bootstrappedTabs is also ephemeral.
 //
-// Per-tab mode: uses global dynamic rule (no tabIds) since UA changes per
+// A1: Client Hints ride the same rule as UA (SET for Chromium personas,
+// REMOVE for Firefox) so HTTP CH matches navigator.userAgentData.
+//
+// Per-tab mode: uses global dynamic rule (no tabIds) since UA/CH change per
 // active tab via updateUAHeaderRule in tabs.onActivated. Per-tab mode is
 // expert-only, de-scoped from v0.1.0 strict proof claim, and the UA
 // mismatch on non-bootstrapped tabs is an accepted trade-off.
@@ -528,15 +537,16 @@ async function updateTabScopedDNR() {
 
   const tabIds = [...STATE.bootstrappedTabs];
 
-  // Get current UA — derive from in-memory STATE.sessionSeed to stay
-  // coherent with executeScript injections (which also use STATE.sessionSeed).
+  // Derive persona from in-memory STATE.sessionSeed to stay coherent with
+  // executeScript injections (which also use STATE.sessionSeed).
   // Avoids async race with chrome.storage.session reads.
-  let ua = null;
+  let profile = null;
   if (STATE.sessionSeed) {
-    ua = generateProfile(STATE.sessionSeed).userAgent;
+    profile = generateProfile(STATE.sessionSeed);
   }
+  const requestHeaders = buildPersonaRequestHeaders(profile);
 
-  if (tabIds.length === 0 || !ua) {
+  if (tabIds.length === 0 || !requestHeaders.length) {
     // No bootstrapped tabs or no profile — remove session rule AND any stale arming rule
     try {
       await chrome.declarativeNetRequest.updateSessionRules({
@@ -554,9 +564,7 @@ async function updateTabScopedDNR() {
         priority: 3,
         action: {
           type: "modifyHeaders",
-          requestHeaders: [
-            { header: "User-Agent", operation: "set", value: ua },
-          ],
+          requestHeaders,
         },
         condition: {
           urlFilter: "*",
@@ -867,7 +875,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // Per-tab mode: set UA header to match the active tab's seed
           if (STATE.identityMode === "per-tab" && tab.id === activeTabId) {
             const profile = generateProfile(tabSeed);
-            await updateUAHeaderRule(profile.userAgent);
+            await updateUAHeaderRule(profile);
           }
         }
 
@@ -1079,7 +1087,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
     // with this tab's profile UA for the DNR rule. updateTabScopedDNR
     // reads from session storage, so we update the stored profile.
     const profile = generateProfile(seed);
-    await updateUAHeaderRule(profile.userAgent);
+    await updateUAHeaderRule(profile);
   }
 });
 

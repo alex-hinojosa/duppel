@@ -126,3 +126,112 @@ test.describe('Client Hints spoofing', () => {
     expect(result.getHEVStr).toMatch(/\[native code\]|function getHighEntropyValues/);
   });
 });
+
+test.describe('Client Hints HTTP↔JS coherence (A1)', () => {
+  test('fetch sec-ch-ua* matches userAgentData (Chromium) or absent (Firefox)', async ({ extensionPage }) => {
+    const result = await extensionPage.evaluate(async () => {
+      const resp = await fetch('/echo-headers');
+      const headers = await resp.json();
+      const uad = (navigator as any).userAgentData;
+      const jsUA = navigator.userAgent;
+      const isFirefox = /Firefox\//.test(jsUA) && !/Chrome\//.test(jsUA);
+
+      let hev: any = null;
+      if (uad && typeof uad.getHighEntropyValues === 'function') {
+        hev = await uad.getHighEntropyValues([
+          'architecture', 'bitness', 'model', 'platformVersion', 'fullVersionList', 'wow64',
+        ]);
+      }
+
+      return {
+        isFirefox,
+        jsUA,
+        jsAvailable: !!uad,
+        jsMobile: uad ? uad.mobile : null,
+        jsPlatform: uad ? uad.platform : null,
+        jsBrands: uad ? uad.brands : null,
+        jsArchitecture: hev ? hev.architecture : null,
+        jsBitness: hev ? hev.bitness : null,
+        jsModel: hev ? hev.model : null,
+        jsPlatformVersion: hev ? hev.platformVersion : null,
+        jsWow64: hev ? hev.wow64 : null,
+        httpUA: headers['user-agent'] || '',
+        httpSecChUa: headers['sec-ch-ua'],
+        httpMobile: headers['sec-ch-ua-mobile'],
+        httpPlatform: headers['sec-ch-ua-platform'],
+        httpPlatformVersion: headers['sec-ch-ua-platform-version'],
+        httpArch: headers['sec-ch-ua-arch'],
+        httpBitness: headers['sec-ch-ua-bitness'],
+        httpModel: headers['sec-ch-ua-model'],
+        httpFullVersionList: headers['sec-ch-ua-full-version-list'],
+        httpWow64: headers['sec-ch-ua-wow64'],
+      };
+    });
+
+    // UA parity still holds (regression)
+    expect(result.httpUA).toBe(result.jsUA);
+
+    if (result.isFirefox || !result.jsAvailable) {
+      // Firefox persona: no userAgentData → CH must not be present on wire
+      expect(result.httpSecChUa).toBeUndefined();
+      expect(result.httpMobile).toBeUndefined();
+      expect(result.httpPlatform).toBeUndefined();
+      expect(result.httpPlatformVersion).toBeUndefined();
+      expect(result.httpArch).toBeUndefined();
+      expect(result.httpBitness).toBeUndefined();
+      expect(result.httpModel).toBeUndefined();
+      expect(result.httpFullVersionList).toBeUndefined();
+      expect(result.httpWow64).toBeUndefined();
+      return;
+    }
+
+    // Chromium persona: HTTP CH must match JS userAgentData
+    expect(result.httpMobile).toBe(result.jsMobile ? '?1' : '?0');
+    expect(result.httpPlatform).toBe(`"${result.jsPlatform}"`);
+    expect(result.httpPlatformVersion).toBe(`"${result.jsPlatformVersion}"`);
+    expect(result.httpArch).toBe(`"${result.jsArchitecture}"`);
+    expect(result.httpBitness).toBe(`"${result.jsBitness}"`);
+    expect(result.httpModel).toBe(`"${result.jsModel ?? ''}"`);
+    expect(result.httpWow64).toBe(result.jsWow64 ? '?1' : '?0');
+
+    // Brand list: each JS brand appears in sec-ch-ua with matching major version
+    expect(result.httpSecChUa).toBeTruthy();
+    for (const b of result.jsBrands || []) {
+      expect(result.httpSecChUa).toContain(`"${b.brand}";v="${b.version}"`);
+    }
+    expect(result.httpFullVersionList).toBeTruthy();
+    for (const b of result.jsBrands || []) {
+      expect(result.httpFullVersionList).toContain(`"${b.brand}";v="${b.version}.0.0.0"`);
+    }
+  });
+
+  test('main_frame subresource after bootstrap: CH platform matches JS when Chromium', async ({ context }) => {
+    const { getTestPageUrl } = await import('../fixtures/extension');
+    const base = getTestPageUrl();
+    const port = new URL(base).port;
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${port}/echo-page`);
+    // Subresource after bootstrap is the success-driven contract (first paint may race)
+    await page.waitForTimeout(500);
+    const result = await page.evaluate(async () => {
+      const resp = await fetch('/echo-headers');
+      const headers = await resp.json();
+      const uad = (navigator as any).userAgentData;
+      return {
+        jsUA: navigator.userAgent,
+        jsPlatform: uad ? uad.platform : null,
+        httpUA: headers['user-agent'] || '',
+        httpPlatform: headers['sec-ch-ua-platform'],
+        httpSecChUa: headers['sec-ch-ua'],
+      };
+    });
+    expect(result.httpUA).toBe(result.jsUA);
+    if (result.jsPlatform) {
+      expect(result.httpPlatform).toBe(`"${result.jsPlatform}"`);
+      expect(result.httpSecChUa).toBeTruthy();
+    } else if (/Firefox\//.test(result.jsUA)) {
+      expect(result.httpSecChUa).toBeUndefined();
+    }
+    await page.close();
+  });
+});
