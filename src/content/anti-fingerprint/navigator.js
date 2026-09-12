@@ -75,6 +75,8 @@ export function installNavigator(ctx) {
   } catch(e) {}
 
   // === Client Hints (navigator.userAgentData) ===
+  // A1: values MUST stay in sync with profiles.js deriveClientHints() /
+  // buildClientHintDNRHeaders() so HTTP sec-ch-ua* matches this JS persona.
   const chromeMatch = profile.userAgent.match(/Chrome\/(\d+)/);
   const edgeMatch = profile.userAgent.match(/Edg\/(\d+)/);
 

@@ -200,3 +200,105 @@ function generateProfile(seed) {
     audioSeed: (rng() * 0xFFFFFFFF) >>> 0,
   };
 }
+
+// === Client Hints (A1 — HTTP↔JS coherence) ===
+// Derives the same UA-CH persona as navigator.js userAgentData spoof.
+// background.js uses this for dynamic DNR SET/REMOVE; keep in sync with
+// src/content/anti-fingerprint/navigator.js Client Hints block.
+const CLIENT_HINT_HEADER_NAMES = [
+  "sec-ch-ua",
+  "sec-ch-ua-mobile",
+  "sec-ch-ua-platform",
+  "sec-ch-ua-platform-version",
+  "sec-ch-ua-arch",
+  "sec-ch-ua-bitness",
+  "sec-ch-ua-model",
+  "sec-ch-ua-full-version-list",
+  "sec-ch-ua-wow64",
+];
+
+function formatUaChBrandList(brands, full) {
+  return brands.map((b) => {
+    const ver = full ? `${b.version}.0.0.0` : b.version;
+    return `"${b.brand}";v="${ver}"`;
+  }).join(", ");
+}
+
+/**
+ * Derive Client Hints persona from a generateProfile() result.
+ * Returns null for Firefox personas (no userAgentData / no UA-CH on wire).
+ */
+function deriveClientHints(profile) {
+  if (!profile || !profile.userAgent) return null;
+  const chromeMatch = profile.userAgent.match(/Chrome\/(\d+)/);
+  const edgeMatch = profile.userAgent.match(/Edg\/(\d+)/);
+  if (!chromeMatch) return null; // Firefox / non-Chromium → no CH
+
+  const chromeVer = chromeMatch[1];
+  const isEdge = !!edgeMatch;
+  const brands = isEdge
+    ? [
+        { brand: "Microsoft Edge", version: edgeMatch[1] },
+        { brand: "Chromium", version: chromeVer },
+        { brand: "Not.A/Brand", version: "8" },
+      ]
+    : [
+        { brand: "Google Chrome", version: chromeVer },
+        { brand: "Chromium", version: chromeVer },
+        { brand: "Not.A/Brand", version: "8" },
+      ];
+
+  const isMac = profile.platform === "MacIntel";
+  const isLinux = typeof profile.platform === "string" && profile.platform.startsWith("Linux");
+  const uaPlatform = isMac ? "macOS" : isLinux ? "Linux" : "Windows";
+  const isAppleSilicon = !!(profile.gpu && profile.gpu.renderer && profile.gpu.renderer.includes("Apple M"));
+  const arch = isAppleSilicon ? "arm" : "x86";
+  const platformVersion = isMac ? "15.5.0" : isLinux ? "6.8.0" : "15.0.0";
+
+  return {
+    brands,
+    mobile: false,
+    platform: uaPlatform,
+    platformVersion,
+    architecture: arch,
+    bitness: "64",
+    model: "",
+    uaFullVersion: `${chromeVer}.0.0.0`,
+    fullVersionList: brands.map((b) => ({ brand: b.brand, version: `${b.version}.0.0.0` })),
+    wow64: false,
+  };
+}
+
+/**
+ * Build DNR modifyHeaders ops for Client Hints coherent with JS persona.
+ * Chromium persona → SET; Firefox / unknown → REMOVE (no UA-CH on wire).
+ */
+function buildClientHintDNRHeaders(profile) {
+  const ch = deriveClientHints(profile);
+  if (!ch) {
+    return CLIENT_HINT_HEADER_NAMES.map((header) => ({
+      header,
+      operation: "remove",
+    }));
+  }
+  return [
+    { header: "sec-ch-ua", operation: "set", value: formatUaChBrandList(ch.brands, false) },
+    { header: "sec-ch-ua-mobile", operation: "set", value: ch.mobile ? "?1" : "?0" },
+    { header: "sec-ch-ua-platform", operation: "set", value: `"${ch.platform}"` },
+    { header: "sec-ch-ua-platform-version", operation: "set", value: `"${ch.platformVersion}"` },
+    { header: "sec-ch-ua-arch", operation: "set", value: `"${ch.architecture}"` },
+    { header: "sec-ch-ua-bitness", operation: "set", value: `"${ch.bitness}"` },
+    { header: "sec-ch-ua-model", operation: "set", value: `"${ch.model}"` },
+    { header: "sec-ch-ua-full-version-list", operation: "set", value: formatUaChBrandList(ch.brands, true) },
+    { header: "sec-ch-ua-wow64", operation: "set", value: ch.wow64 ? "?1" : "?0" },
+  ];
+}
+
+/** UA + Client Hints requestHeaders for a persona (session / per-tab / arming). */
+function buildPersonaRequestHeaders(profile) {
+  if (!profile || !profile.userAgent) return [];
+  return [
+    { header: "User-Agent", operation: "set", value: profile.userAgent },
+    ...buildClientHintDNRHeaders(profile),
+  ];
+}
